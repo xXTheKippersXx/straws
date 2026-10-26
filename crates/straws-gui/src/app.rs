@@ -267,6 +267,8 @@ pub struct Data {
     pub comparisons: Vec<Comparison>,
     /// Snapshots taken so far, for names and colours.
     pub snapshot_count: usize,
+    /// Measured sweeps to compare with (kept across files).
+    pub measurements: Vec<Measurement>,
     /// A new model (name, deck text) a view wants opened, e.g. a template.
     pub new_deck: Option<(String, String)>,
     /// Something a view asked the app to do.
@@ -299,6 +301,29 @@ pub enum Request {
     OpenDialog,
     Open(PathBuf),
     ShowTab(Tab),
+    /// Pick a Touchstone file and add it to the measurements.
+    ImportMeasurement,
+    /// Sweep from one frequency to another (MHz).
+    Sweep(f64, f64),
+}
+
+/// Whether a file is a measured sweep (Touchstone) rather than a deck.
+fn is_sweep_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| straws_core::analysis::measured::ports_from_name(&n.to_string_lossy()))
+        .is_some()
+}
+
+/// A sweep measured with a VNA, to compare with the model.
+pub struct Measurement {
+    pub name: String,
+    pub colour: egui::Color32,
+    pub visible: bool,
+    /// In order of frequency, never empty.
+    pub points: Vec<straws_core::analysis::measured::MeasuredPoint>,
+    /// Measured at the radio end of the Feedline view's feed, which is
+    /// taken off again before it's shown.
+    pub through_feed: bool,
 }
 
 /// A design and its sweep, kept for comparison.
@@ -416,6 +441,8 @@ enum HelpPage {
 /// What a file dialog was opened for.
 enum DialogKind {
     Open,
+    /// Read a measured sweep.
+    Import,
     /// Write these bytes to the chosen file.
     Export(Vec<u8>),
     /// Save, then carry on with what was waiting (if anything).
@@ -490,7 +517,7 @@ const SETTINGS_KEY: &str = "settings";
 const DOCK_KEY: &str = "dock";
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>) -> App {
+    pub fn new(cc: &eframe::CreationContext<'_>, open: Vec<PathBuf>) -> App {
         let settings: Settings = cc
             .storage
             .and_then(|s| eframe::get_value(s, SETTINGS_KEY))
@@ -542,8 +569,13 @@ impl App {
                 "No GPU renderer is available, so the 3D views can't be drawn.",
             );
         }
-        if let Some(path) = open {
-            app.open(&path);
+        // The deck first, so the sweeps' message comes after it.
+        let (sweeps, decks): (Vec<_>, Vec<_>) = open.into_iter().partition(|p| is_sweep_file(p));
+        if let Some(path) = decks.first() {
+            app.open(path);
+        }
+        for path in &sweeps {
+            app.import_measurement(path);
         }
         app
     }
@@ -588,12 +620,14 @@ impl App {
         let generation = self.data.generation + 1;
         let messages = std::mem::take(&mut self.data.messages);
         let comparisons = std::mem::take(&mut self.data.comparisons);
+        let measurements = std::mem::take(&mut self.data.measurements);
         let snapshot_count = self.data.snapshot_count;
         self.data = Data {
             generation,
             model_generation: generation,
             messages,
             comparisons,
+            measurements,
             snapshot_count,
             ..Data::default()
         };
@@ -1085,6 +1119,7 @@ impl App {
         };
         match (kind, answer) {
             (DialogKind::Open, Some(p)) => self.open(&p),
+            (DialogKind::Import, Some(p)) => self.import_measurement(&p),
             (DialogKind::Export(bytes), Some(p)) => match std::fs::write(&p, bytes) {
                 Ok(()) => self
                     .data
@@ -1605,6 +1640,67 @@ impl App {
         }
     }
 
+    fn import_dialog(&mut self) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("Touchstone (VNA sweeps)", &["s1p", "s2p", "S1P", "S2P"])
+            .add_filter("All files", &["*"]);
+        if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
+            dialog = dialog.set_directory(dir);
+        }
+        self.run_dialog(DialogKind::Import, move || dialog.pick_file());
+    }
+
+    /// Reads a Touchstone file into the measurements, or says why it can't.
+    fn import_measurement(&mut self, path: &std::path::Path) {
+        use straws_core::analysis::measured;
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Measurement".into());
+        let file = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let read = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                let text = String::from_utf8_lossy(&bytes);
+                measured::read_touchstone(&text, measured::ports_from_name(&file).unwrap_or(1))
+            });
+        match read {
+            Ok(points) => {
+                let (a, b) = (points[0].mhz, points[points.len() - 1].mhz);
+                self.data.message(
+                    Level::Info,
+                    format!(
+                        "Imported {file}: {} points, {a:.3} to {b:.3} MHz. It shows on the SWR \
+                         plot and Smith chart within the sweep; the Compare view has its settings.",
+                        points.len()
+                    ),
+                );
+                let colours = crate::views::compare::MEASURED_COLOURS;
+                let colour = colours[self.data.measurements.len() % colours.len()];
+                self.data.measurements.push(Measurement {
+                    name,
+                    colour,
+                    visible: true,
+                    points,
+                    through_feed: false,
+                });
+                if let Some(path) = self.dock.find_tab(&Tab::Compare) {
+                    let _ = self.dock.set_active_tab(path);
+                }
+            }
+            Err(e) => self.data.message(
+                Level::Error,
+                format!("Couldn't read {file} as a VNA sweep: {e}"),
+            ),
+        }
+    }
+
     fn open_dialog(&mut self) {
         if self.dialog.is_some() {
             return;
@@ -1693,6 +1789,14 @@ impl App {
                 }
                 ui.separator();
                 ui.menu_button("Export", |ui| self.export_menu(ui));
+                if ui
+                    .button("Import a VNA sweep…")
+                    .on_hover_text("A Touchstone file (.s1p or .s2p) to compare with the model")
+                    .clicked()
+                {
+                    ui.close();
+                    self.import_dialog();
+                }
                 ui.separator();
                 if ui.button("Quit").clicked() {
                     self.leave(Leave::Quit);
@@ -2118,7 +2222,11 @@ impl eframe::App for App {
             self.leave(Leave::Open(p));
         }
         if let Some(p) = dropped {
-            self.leave(Leave::Open(p));
+            if is_sweep_file(&p) {
+                self.import_measurement(&p);
+            } else {
+                self.leave(Leave::Open(p));
+            }
         }
         // Closing the window with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.changed() {
@@ -2186,6 +2294,15 @@ impl eframe::App for App {
                 if let Some(path) = self.dock.find_tab(&t) {
                     let _ = self.dock.set_active_tab(path);
                 }
+            }
+            Some(Request::ImportMeasurement) => self.import_dialog(),
+            Some(Request::Sweep(a, b)) => {
+                self.plan_edit.start_mhz = a;
+                self.plan_edit.stop_mhz = b;
+                if self.runnable() {
+                    self.start_sweep();
+                }
+                self.set_frequency((a + b) / 2.0);
             }
             None => {}
         }

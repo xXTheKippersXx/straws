@@ -217,14 +217,7 @@ pub fn chain_from_feed(feed: &crate::analysis::feedline::Feed, mhz: f64) -> (Vec
 /// share of the radio's power that reaches the antenna.
 pub fn evaluate(stages: &[Stage], z: Complex64, mhz: f64, z0: f64) -> (Complex64, f64, f64) {
     let one = Complex64::new(1.0, 0.0);
-    let zero = Complex64::default();
-    let mut m: M2 = [[one, zero], [zero, one]];
-    let mut passed = 1.0;
-    for s in stages {
-        let (a, p) = s.abcd(mhz);
-        m = mul(a, m);
-        passed *= p;
-    }
+    let (m, passed) = chain(stages, mhz);
     // Load current 1 A: V = z at the antenna.
     let (vl, il) = (z, one);
     let vin = m[0][0] * vl + m[0][1] * il;
@@ -244,6 +237,27 @@ pub fn evaluate(stages: &[Stage], z: Complex64, mhz: f64, z0: f64) -> (Complex64
         f64::INFINITY
     };
     (zin, swr, eff.clamp(0.0, 1.0))
+}
+
+/// The chain's ABCD matrix at `mhz` (radio side as the input) and the share
+/// of the power its balun and fixed losses pass.
+fn chain(stages: &[Stage], mhz: f64) -> (M2, f64) {
+    let one = Complex64::new(1.0, 0.0);
+    let zero = Complex64::default();
+    let mut m: M2 = [[one, zero], [zero, one]];
+    let mut passed = 1.0;
+    for s in stages {
+        let (a, p) = s.abcd(mhz);
+        m = mul(a, m);
+        passed *= p;
+    }
+    (m, passed)
+}
+
+/// The chain's ABCD matrix at `mhz`, radio side as the input:
+/// V_radio = A·V + B·I and I_radio = C·V + D·I at the antenna.
+pub fn chain_matrix(stages: &[Stage], mhz: f64) -> [[Complex64; 2]; 2] {
+    chain(stages, mhz).0
 }
 
 /// The worst SWR and the worst loss (dB) over `points` (MHz, antenna Z).

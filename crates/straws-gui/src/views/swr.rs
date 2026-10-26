@@ -104,6 +104,7 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
             (c.name.clone(), c.colour, pts)
         })
         .collect();
+    let measured = crate::views::compare::measured(data, settings, (plan.start_mhz, plan.stop_mhz));
     // The chosen plan's bands within (or near) the sweep, shaded.
     let span = plan.stop_mhz - plan.start_mhz;
     let bands: Vec<_> = crate::views::bands::chosen(settings)
@@ -140,6 +141,13 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
                     .collect();
                 pui.line(Line::new(name.as_str(), p).color(*colour).width(1.5));
             }
+            for (name, colour, pts) in &measured {
+                let p: PlotPoints = pts
+                    .iter()
+                    .map(|&(f, z)| [f, feed::swr(z, z0).min(20.0)])
+                    .collect();
+                pui.line(Line::new(name.as_str(), p).color(*colour).width(2.0));
+            }
             pui.line(Line::new("SWR", swr_points).color(swr_colour).width(2.0));
             pui.vline(VLine::new("frequency", data.mhz).color(marker));
             (pui.response().clicked(), pui.pointer_coordinate())
@@ -169,6 +177,17 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
                     Line::new(format!("{name} X"), x)
                         .color(colour.gamma_multiply(0.7))
                         .width(1.2)
+                        .style(egui_plot::LineStyle::dashed_dense()),
+                );
+            }
+            for (name, colour, pts) in &measured {
+                let r: PlotPoints = pts.iter().map(|&(f, z)| [f, z.re]).collect();
+                let x: PlotPoints = pts.iter().map(|&(f, z)| [f, z.im]).collect();
+                pui.line(Line::new(format!("{name} R"), r).color(*colour).width(1.6));
+                pui.line(
+                    Line::new(format!("{name} X"), x)
+                        .color(colour.gamma_multiply(0.7))
+                        .width(1.6)
                         .style(egui_plot::LineStyle::dashed_dense()),
                 );
             }

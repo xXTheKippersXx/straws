@@ -371,6 +371,13 @@ joined wire ends too* in the prompt if you don't want that).
   antenna's own variables can be tuned with it.
 - **Compare**: take a snapshot, change the design, and both show on the SWR,
   Smith chart and pattern plots. *Restore* brings a design back.
+  Under **Measurements**, *Import a VNA sweep* (or File > Import a VNA sweep,
+  or drop the file on the window) reads a Touchstone file (.s1p, or S11 of an
+  .s2p) and draws it on the SWR, R and X, and Smith plots within the sweep.
+  If you measured at the radio end of a cable, tick *Measured through the
+  feedline*: the cable, connectors and balun set in the Feedline view are
+  taken off again, so you compare the antenna with the antenna. *Sweep this
+  range* sets the model's sweep to the measured frequencies.
 - **Matching**: networks that match the antenna at the slider frequency to Z₀
   (L, pi and T with a chosen Q, or a stub), with part values or the nearest
   standard parts, drawn on a Smith chart, and the SWR across the band with the

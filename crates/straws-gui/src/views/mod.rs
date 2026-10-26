@@ -2,7 +2,7 @@
 
 pub mod bands;
 mod checks;
-mod compare;
+pub mod compare;
 pub mod curves;
 mod cuts;
 mod feedline;
@@ -105,7 +105,7 @@ impl egui_dock::TabViewer for TabView<'_> {
             Tab::FeedSystem => self.views.feed_system.ui(ui, self.data, self.settings),
             Tab::Ground => ground::ui(ui, self.data, self.settings),
             Tab::Smith => smith::ui(ui, self.data, self.settings),
-            Tab::Compare => self.views.compare.ui(ui, self.data, self.settings.z0),
+            Tab::Compare => self.views.compare.ui(ui, self.data, self.settings),
             Tab::Optimiser => self.views.optimiser.ui(ui, self.data, self.settings),
             Tab::Matching => self.views.matching.ui(ui, self.data, self.settings),
             Tab::Templates => self.views.templates.ui(ui, self.data),

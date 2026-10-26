@@ -20,7 +20,11 @@ fn main() -> eframe::Result {
     straws_core::worker::run_if_worker();
     bring_old_settings();
 
-    let open_path = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    // A deck to open and/or VNA sweeps to import.
+    let open_paths: Vec<_> = std::env::args_os()
+        .skip(1)
+        .map(std::path::PathBuf::from)
+        .collect();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("STRAWS")
@@ -35,7 +39,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         APP_ID,
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, open_path)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, open_paths)))),
     )
 }
 

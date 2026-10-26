@@ -113,6 +113,15 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
             .collect();
         painter.add(egui::Shape::line(pts, Stroke::new(1.5, c.colour)));
     }
+    if let (Some(a), Some(b)) = (points.first(), points.last()) {
+        for (_, colour, pts) in crate::views::compare::measured(data, settings, (a.0, b.0)) {
+            let pts: Vec<Pos2> = pts
+                .iter()
+                .map(|&(_, z)| place(gamma(z, z0), centre, radius))
+                .collect();
+            painter.add(egui::Shape::line(pts, Stroke::new(2.0, colour)));
+        }
+    }
     let trace: Vec<Pos2> = points
         .iter()
         .map(|&(_, z)| place(gamma(z, z0), centre, radius))

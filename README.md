@@ -72,7 +72,10 @@ through 30 m of RG-213, and the optimiser ready to tune the elements.*
   frequency or tuned over the sweep, with exact currents from an L network at
   each element) written into the model so NEC runs the whole network, or a 90°
   hybrid coupler.
-- **Compare** designs by snapshot, overlaid on the plots.
+- **Compare** designs by snapshot, overlaid on the plots, and with your own
+  measurements: import a VNA sweep (Touchstone .s1p or .s2p, from a NanoVNA or
+  any analyser) and see it on the SWR, impedance and Smith plots beside the
+  model, with the feedline taken off if you measured through it.
 - **Checks while you edit**: segments too long or too thick for the frequency,
   uneven junctions, crossing, nearly joined or duplicate wires, missing sources,
   patch sizes and closed surfaces. Problem wires turn red; edits that would
@@ -116,8 +119,8 @@ straws-cli bench benchmarks --engine-dir C:\4nec2\exe
 Run `straws-cli help` for everything else.
 
 ## Plans
-- Measurements in: VNA sweeps overlaid on the plots and the model fitted to
-  them; CAD import.
+- Fit the model to a measured VNA sweep (the optimiser adjusts lengths, ground
+  and losses until the two agree); CAD import.
 - STEP export straight from the app (for now: STL, which FreeCAD turns into a
   solid and saves as STEP) and a native PDF report (for now: print the report
   page to PDF).
