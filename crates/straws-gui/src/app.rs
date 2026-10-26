@@ -310,7 +310,7 @@ pub enum Request {
 /// Whether a file is a measured sweep (Touchstone) rather than a deck.
 fn is_drawing_file(path: &Path) -> bool {
     path.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("dxf"))
+        .is_some_and(|e| e.eq_ignore_ascii_case("dxf") || e.eq_ignore_ascii_case("stl"))
 }
 
 /// Whether a file is a measured sweep (Touchstone) rather than a deck.
@@ -1723,7 +1723,7 @@ impl App {
             return;
         }
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("DXF drawings", &["dxf", "DXF"])
+            .add_filter("CAD drawings and models", &["dxf", "DXF", "stl", "STL"])
             .add_filter("All files", &["*"]);
         if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
@@ -1742,7 +1742,7 @@ impl App {
             .and_then(|bytes| {
                 crate::views::cadimport::CadImport::new(
                     file.clone(),
-                    String::from_utf8_lossy(&bytes).into_owned(),
+                    &bytes,
                     // The sweep's top, as the toolbar has it (also with no model open).
                     self.plan_edit.stop_mhz.max(0.001),
                     self.data.model.is_some(),
@@ -1793,7 +1793,7 @@ impl App {
                             segments: crate::views::wires::auto_segments(length, mhz),
                             a: w.a,
                             b: w.b,
-                            radius,
+                            radius: w.radius.unwrap_or(radius),
                             comment: Some(w.layer.clone()),
                         }
                     })
@@ -1917,9 +1917,10 @@ impl App {
                     self.import_dialog();
                 }
                 if ui
-                    .button("Import a CAD drawing (DXF)…")
+                    .button("Import from CAD (DXF, STL)…")
                     .on_hover_text(
-                        "Lines, arcs, circles and splines from a wire-frame drawing become wires",
+                        "Lines, arcs, circles and splines from a wire-frame drawing (DXF), or the \
+                         straight tubes of a solid model (STL), become wires",
                     )
                     .clicked()
                 {

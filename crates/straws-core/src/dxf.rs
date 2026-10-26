@@ -513,6 +513,9 @@ pub struct DrawnWire {
     pub a: P3,
     pub b: P3,
     pub layer: String,
+    /// The wire's own radius (metres) when the source says, as a solid
+    /// model's tube does.
+    pub radius: Option<f64>,
 }
 
 /// The drawing's pieces as straight wires in metres: points within
@@ -537,6 +540,7 @@ pub fn wires(drawing: &Drawing, options: &WireOptions) -> Vec<DrawnWire> {
         index.push(ids);
     }
     let merged = merge_points(&points, options.join_m.max(0.0));
+    let points = merged_positions(&points, &merged);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for (p, ids) in paths.iter().zip(&index) {
@@ -556,15 +560,35 @@ pub fn wires(drawing: &Drawing, options: &WireOptions) -> Vec<DrawnWire> {
                 a,
                 b,
                 layer: p.layer.clone(),
+                radius: None,
             });
         }
     }
     out
 }
 
+/// Where each merged group of points ends up: the middle of its points
+/// (so a gap closed by joining closes from both sides), stored at the
+/// group's index from [`merge_points`].
+pub(crate) fn merged_positions(points: &[P3], merged: &[usize]) -> Vec<P3> {
+    let mut sum = vec![[0.0; 3]; points.len()];
+    let mut count = vec![0usize; points.len()];
+    for (p, &g) in points.iter().zip(merged) {
+        for i in 0..3 {
+            sum[g][i] += p[i];
+        }
+        count[g] += 1;
+    }
+    sum.iter()
+        .zip(&count)
+        .zip(points)
+        .map(|((s, &n), p)| if n == 0 { *p } else { s.map(|v| v / n as f64) })
+        .collect()
+}
+
 /// For each point, the index of the point it's merged into (the first of
 /// its group). Points chain together within `tol`.
-fn merge_points(points: &[P3], tol: f64) -> Vec<usize> {
+pub(crate) fn merge_points(points: &[P3], tol: f64) -> Vec<usize> {
     let mut parent: Vec<usize> = (0..points.len()).collect();
     fn find(parent: &mut [usize], i: usize) -> usize {
         let mut r = i;

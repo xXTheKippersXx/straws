@@ -1,7 +1,9 @@
-//! Importing a wire-frame drawing (DXF): the choices before the wires go in.
+//! Importing a wire-frame drawing (DXF) or a solid model's tubes (STL):
+//! the choices before the wires go in.
 
 use eframe::egui::{self, RichText};
 use straws_core::dxf::{self, Drawing, DrawnWire, WireOptions};
+use straws_core::stl;
 
 /// Units a drawing may be in: name and metres per unit.
 const UNITS: [(&str, f64); 6] = [
@@ -18,6 +20,10 @@ pub struct CadImport {
     pub file: String,
     text: String,
     drawing: Drawing,
+    /// A solid model's parts (STL), instead of a drawing.
+    solid: Option<stl::Parts>,
+    /// Each tube keeps its own diameter (solid models).
+    own_diameter: bool,
     /// Index into `UNITS`.
     units: usize,
     /// The file said which units it's in.
@@ -42,7 +48,8 @@ pub struct CadImport {
 pub enum Outcome {
     Open,
     Cancel,
-    /// Add these wires (metres), with this radius (m) and frequency (MHz).
+    /// Add these wires (metres), with this radius (m) where a wire has no
+    /// radius of its own, and this frequency (MHz).
     Import {
         wires: Vec<DrawnWire>,
         radius: f64,
@@ -52,8 +59,40 @@ pub enum Outcome {
 }
 
 impl CadImport {
-    pub fn new(file: String, text: String, mhz: f64, has_model: bool) -> Result<CadImport, String> {
+    pub fn new(file: String, bytes: &[u8], mhz: f64, has_model: bool) -> Result<CadImport, String> {
         let step_deg = 10.0;
+        if file.to_ascii_lowercase().ends_with(".stl") {
+            let parts = stl::tubes(&stl::read_stl(bytes)?);
+            if parts.tubes.is_empty() {
+                return Err(format!(
+                    "no straight round tubes in it ({} flat pieces, {} other shapes)",
+                    parts.flat, parts.other
+                ));
+            }
+            let count = parts.tubes.len();
+            return Ok(CadImport {
+                file,
+                text: String::new(),
+                drawing: Drawing::default(),
+                solid: Some(parts),
+                own_diameter: true,
+                units: 2, // STL files don't say; CAD programs mostly use millimetres
+                units_from_file: false,
+                // One entry a tube (the count is its index), all ticked.
+                layers: (0..count)
+                    .map(|k| (format!("tube {}", k + 1), k, true))
+                    .collect(),
+                diameter_mm: 2.0,
+                join_mm: 1.0,
+                step_deg,
+                mhz,
+                new_model: !has_model,
+                preview: Vec::new(),
+                preview_key: None,
+                error: None,
+            });
+        }
+        let text = String::from_utf8_lossy(bytes).into_owned();
         let drawing = dxf::read_dxf(&text, step_deg)?;
         if drawing.paths.is_empty() {
             let skipped = if drawing.skipped.is_empty() {
@@ -84,6 +123,8 @@ impl CadImport {
             file,
             text,
             drawing,
+            solid: None,
+            own_diameter: false,
             units,
             units_from_file,
             layers,
@@ -128,6 +169,13 @@ impl CadImport {
                 Err(e) => self.error = Some(e),
             }
         }
+        if let Some(parts) = &self.solid {
+            let mut wires = stl::wires(&parts.tubes, UNITS[self.units].1, self.join_mm / 1000.0);
+            wires.retain(|w| self.layers.iter().any(|l| l.2 && l.0 == w.layer));
+            self.preview = wires;
+            self.preview_key = Some(key);
+            return;
+        }
         let mut options = self.options();
         if self.layers.iter().all(|l| !l.2) {
             options.layers = vec![String::new()]; // none: nothing matches
@@ -142,12 +190,17 @@ impl CadImport {
         egui::Modal::new(egui::Id::new("import drawing")).show(ctx, |ui| {
             ui.set_width(520.0);
             ui.heading(format!("Import {}", self.file));
+            let solid = self.solid.is_some();
             ui.label(
-                RichText::new(
+                RichText::new(if solid {
+                    "Each straight round tube in the model becomes a wire along its middle, with \
+                     the tube's diameter. Ends closer than the join distance become one point, so \
+                     tubes that meet end to end are joined."
+                } else {
                     "Lines, polylines, arcs, circles, ellipses and splines become wires; curves are \
                      cut into straight pieces. Ends closer than the join distance become one point, \
-                     so wires that touch in the drawing are joined.",
-                )
+                     so wires that touch in the drawing are joined."
+                })
                 .weak(),
             );
             ui.add_space(6.0);
@@ -167,6 +220,8 @@ impl CadImport {
                         ui.label(
                             RichText::new(if self.units_from_file {
                                 "(as the file says)"
+                            } else if solid {
+                                "(STL files don't say: check the size below)"
                             } else {
                                 "(the file doesn't say: check the size below)"
                             })
@@ -175,13 +230,19 @@ impl CadImport {
                     });
                     ui.end_row();
                     ui.label("Wire diameter");
-                    ui.add(
-                        crate::views::num(&mut self.diameter_mm)
-                            .speed(0.05)
-                            .range(0.01..=1000.0)
-                            .max_decimals(3)
-                            .suffix(" mm"),
-                    );
+                    ui.horizontal(|ui| {
+                        if solid {
+                            ui.checkbox(&mut self.own_diameter, "each tube's own");
+                        }
+                        ui.add_enabled(
+                            !(solid && self.own_diameter),
+                            crate::views::num(&mut self.diameter_mm)
+                                .speed(0.05)
+                                .range(0.01..=1000.0)
+                                .max_decimals(3)
+                                .suffix(" mm"),
+                        );
+                    });
                     ui.end_row();
                     ui.label("Join ends within");
                     ui.add(
@@ -193,16 +254,20 @@ impl CadImport {
                     )
                     .on_hover_text("Ends this close together become one point, so the wires join");
                     ui.end_row();
-                    ui.label("Curves in steps of");
-                    ui.add(
-                        crate::views::num(&mut self.step_deg)
-                            .speed(0.5)
-                            .range(1.0..=45.0)
-                            .max_decimals(1)
-                            .suffix("°"),
-                    )
-                    .on_hover_text("Each straight piece of an arc or circle turns at most this much");
-                    ui.end_row();
+                    if !solid {
+                        ui.label("Curves in steps of");
+                        ui.add(
+                            crate::views::num(&mut self.step_deg)
+                                .speed(0.5)
+                                .range(1.0..=45.0)
+                                .max_decimals(1)
+                                .suffix("°"),
+                        )
+                        .on_hover_text(
+                            "Each straight piece of an arc or circle turns at most this much",
+                        );
+                        ui.end_row();
+                    }
                     ui.label("Highest frequency");
                     ui.add(
                         crate::views::num(&mut self.mhz)
@@ -224,12 +289,26 @@ impl CadImport {
                 });
             if self.layers.len() > 1 {
                 ui.add_space(4.0);
-                ui.label("Layers");
+                ui.label(if solid { "Tubes (untick a boom or mast to leave it out)" } else { "Layers" });
+                let mm = UNITS[self.units].1 * 1000.0;
                 egui::ScrollArea::vertical()
                     .max_height(140.0)
                     .show(ui, |ui| {
                         for (name, count, on) in &mut self.layers {
-                            ui.checkbox(on, format!("{name} ({count})"));
+                            let text = match &self.solid {
+                                Some(parts) => {
+                                    let t = parts.tubes[*count];
+                                    let long: f64 =
+                                        (0..3).map(|i| (t.b[i] - t.a[i]).powi(2)).sum::<f64>().sqrt();
+                                    format!(
+                                        "{name}: {:.1} mm long, {:.2} mm across",
+                                        long * mm,
+                                        2.0 * t.radius * mm
+                                    )
+                                }
+                                None => format!("{name} ({count})"),
+                            };
+                            ui.checkbox(on, text);
                         }
                     });
             }
@@ -260,13 +339,35 @@ impl CadImport {
                     short(hi[2] - lo[2]),
                     shortest * 1000.0
                 ));
-                if shortest < 2.0 * self.diameter_mm / 1000.0 {
+                let thickest = if solid && self.own_diameter {
+                    self.preview
+                        .iter()
+                        .filter_map(|w| w.radius)
+                        .fold(0.0, f64::max)
+                        * 2.0
+                } else {
+                    self.diameter_mm / 1000.0
+                };
+                if shortest < 2.0 * thickest {
                     ui.colored_label(
                         ui.visuals().warn_fg_color,
                         "Some pieces are shorter than twice the wire's thickness: NEC handles them \
                          badly. Larger curve steps, or a larger join distance, make fewer of them.",
                     );
                 }
+            }
+            if let Some(parts) = &self.solid
+                && parts.flat + parts.other > 0
+            {
+                ui.label(
+                    RichText::new(format!(
+                        "Left out: {} flat pieces (tube ends, plates, faces of blocks) and {} other \
+                         shapes (bent tubes, dishes). Model plates and dishes with Draw > Plate or \
+                         Dish instead.",
+                        parts.flat, parts.other
+                    ))
+                    .weak(),
+                );
             }
             if !self.drawing.skipped.is_empty() {
                 let list: Vec<String> = self
@@ -296,8 +397,15 @@ impl CadImport {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if ui.add_enabled(n > 0, egui::Button::new("Import")).clicked() {
+                    let mut wires = std::mem::take(&mut self.preview);
+                    if !(solid && self.own_diameter) {
+                        for w in &mut wires {
+                            w.radius = None;
+                        }
+                    }
+                    self.preview_key = None;
                     outcome = Outcome::Import {
-                        wires: std::mem::take(&mut self.preview),
+                        wires,
                         radius: self.diameter_mm / 2000.0,
                         mhz: self.mhz,
                         new_model: self.new_model || !has_model,

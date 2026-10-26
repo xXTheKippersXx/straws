@@ -16,7 +16,7 @@ With nothing open, the 3D model view offers three ways in:
   *Top* choose the plane you draw on. Then select the wire to feed and click
   *Feed this wire* in the Wires view.
 - **Open a deck**: any `.nec` file, including 4nec2's.
-- **Import a drawing**: File > Import a CAD drawing (DXF), or drop a `.dxf`
+- **Import a drawing**: File > Import from CAD (DXF, STL), or drop a `.dxf`
   file on the window. Lines, polylines (with their arcs), arcs, circles,
   ellipses and splines become wires; curves are cut into straight pieces
   (10° each unless you choose otherwise). Check the units (the file usually
@@ -27,6 +27,15 @@ With nothing open, the 3D model view offers three ways in:
   Each wire is named after its layer. Text, dimensions, hatches and block
   references are left out: explode blocks in your CAD program first. The
   wires go into a new model or the open one; then feed one to run it.
+- **Import a solid model** (STL, as most CAD programs and 3D-printing tools
+  save): each straight round tube becomes a wire along its middle with the
+  tube's own diameter (or one you choose). STL files don't say their units:
+  millimetres is assumed, and the overall size shown tells you if that's
+  wrong. Each tube is listed with its length and diameter; untick a boom or
+  mast you don't want as a wire. Flat pieces (tube ends, plates, the faces of
+  square bars) and other shapes (bent tubes, dishes) are left out and
+  counted; draw plates and dishes with Draw > Plate or Dish. A join distance
+  a little larger than a feed gap closes it, meeting in the middle.
 
 ## Editing
 - **3D model**: in *Select*, click a wire to select it (Ctrl-click for more)

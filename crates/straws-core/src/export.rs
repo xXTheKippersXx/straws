@@ -683,6 +683,45 @@ mod stl_tests {
             .fold(f64::MAX, f64::min);
         assert!((lowest - 750.0).abs() < 1e-6, "{lowest}");
     }
+
+    /// Exported tubes read back as the same wires: an inverted L of three
+    /// segments (two up the vertical, one across), 2 mm radius.
+    #[test]
+    fn exported_tubes_import_again() {
+        let seg = |number, centre, length, alpha: f64, beta| crate::output::Segment {
+            number,
+            tag: 1,
+            centre,
+            length,
+            alpha,
+            beta,
+            radius: 0.002,
+            connections: [0, 0],
+        };
+        let segments = [
+            seg(1, [0.0, 0.0, 0.25], 0.5, 90.0, 0.0),
+            seg(2, [0.0, 0.0, 0.75], 0.5, 90.0, 0.0),
+            seg(3, [0.3, 0.0, 1.0], 0.6, 0.0, 0.0),
+        ];
+        let mesh = crate::stl::read_stl(super::stl(&segments, "l").as_bytes()).unwrap();
+        let parts = crate::stl::tubes(&mesh);
+        // The vertical's two segments share their rings: one tube.
+        assert_eq!((parts.tubes.len(), parts.other), (2, 0));
+        let wires = crate::stl::wires(&parts.tubes, 0.001, 0.0005);
+        let has = |a: [f64; 3], b: [f64; 3]| {
+            let near = |p: [f64; 3], q: [f64; 3]| (0..3).all(|i| (p[i] - q[i]).abs() < 1e-6);
+            wires
+                .iter()
+                .any(|w| (near(w.a, a) && near(w.b, b)) || (near(w.a, b) && near(w.b, a)))
+        };
+        assert!(has([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]), "{wires:?}");
+        assert!(has([0.0, 0.0, 1.0], [0.6, 0.0, 1.0]), "{wires:?}");
+        assert!(
+            wires
+                .iter()
+                .all(|w| (w.radius.unwrap() - 0.002).abs() < 1e-9)
+        );
+    }
 }
 
 /// The build sheet as a printable web page. Lengths in `unit` (millimetres

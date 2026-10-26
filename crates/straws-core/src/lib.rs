@@ -12,6 +12,7 @@ pub mod optimise;
 pub mod output;
 pub mod reference;
 pub mod solver;
+pub mod stl;
 pub mod templates;
 pub mod units;
 pub mod validate;
