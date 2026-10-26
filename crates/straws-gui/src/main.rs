@@ -28,7 +28,7 @@ fn main() -> eframe::Result {
         .collect();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("STRAWS")
+            .with_title(concat!("STRAWS ", env!("CARGO_PKG_VERSION")))
             .with_inner_size([1280.0, 760.0])
             .with_maximized(true)
             .with_min_inner_size([800.0, 500.0])

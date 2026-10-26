@@ -2662,12 +2662,12 @@ impl eframe::App for App {
         crate::views::newvar::prompt(&ctx, &mut self.data);
         crate::views::bands::editor(&ctx, &mut self.settings, &mut self.editing_bands);
         self.drawing_dialog(&ctx);
+        // The version comes from Cargo.toml when the program is built.
+        let app = concat!("STRAWS ", env!("CARGO_PKG_VERSION"));
         let title = match &self.data.model {
-            Some(m) if self.changed() => {
-                format!("• {} — STRAWS (changed)", m.name)
-            }
-            Some(m) => format!("{} — STRAWS", m.name),
-            None => "STRAWS".to_string(),
+            Some(m) if self.changed() => format!("• {} — {app} (changed)", m.name),
+            Some(m) => format!("{} — {app}", m.name),
+            None => app.to_string(),
         };
         // Only when it changes: sending it every frame keeps the window
         // redrawing (and busy) while nothing happens.
