@@ -62,6 +62,8 @@ installerIcon = "icons/straws.ico"
 
 [package.metadata.packager.deb]
 section = "hamradio"
+# Its own menu entry (the generated one has no categories).
+desktopTemplate = "../../packaging/linux/straws-deb.desktop"
 depends = ["libxkbcommon0", "libwayland-client0", "libx11-6", "libxcursor1", "libxi6", "libxrandr2", "libgl1"]
 
 # The .rpm: `cargo generate-rpm -p crates/straws-gui` after a release build.
