@@ -16,7 +16,7 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-![A 5-element Yagi from the templates: the model coloured by current, its 3D pattern, SWR and impedance across the band, and the elevation and azimuth cuts](docs/screenshots/overview.png)
+![STRAWS in dark mode: a 5-element Yagi over real ground with the current on each element coloured, its 3D radiation pattern, SWR and impedance across the 20 m band, and the elevation and azimuth pattern cuts](docs/screenshots/overview.png)
 
 ## Download
 
@@ -86,10 +86,19 @@ with a paid certificate; the code is all here to read and build yourself.
 - Export CSV, Touchstone, DXF and STL, SVG and PNG images, a report and a
   build sheet with the cut list.
 
-| | |
-|---|---|
-| ![The wire table, Smith chart and variable sliders](docs/screenshots/editing.png) | ![The near-field map, feedline losses and the optimiser](docs/screenshots/tools.png) |
-| Every dimension is a variable: formulas in the wire table, a slider for each, and the Smith chart following as you drag. | The near field at head height with an RF exposure guide, what the radio sees through 30 m of RG-213, and the optimiser. |
+## Screenshots
+
+![A four-square array of verticals: each feed labelled with its current and phase in the 3D view, the pattern beaming one way, and the Feeds view with an amplitude and phase slider for every element](docs/screenshots/arrays.png)
+*Phased arrays: set each element's amplitude and phase with sliders and watch
+the beam steer. The 3D view labels every feed.*
+
+![A double biquad in front of a curved mesh reflector at 1.2 GHz, with its radiation pattern drawn over the antenna, matched to 200 ohms, and its pattern cuts](docs/screenshots/dish.png)
+*Generators and 3D: a double biquad at the focus of a curved mesh reflector,
+its 15.7 dBi beam drawn over the antenna.*
+
+![A dipole fitted to a VNA measurement: the measured sweep and the model overlaid on the SWR, impedance and Smith charts, with the optimiser's fit and the feedline view](docs/screenshots/measure.png)
+*Measure and fit: import a NanoVNA sweep, overlay it on the model, and let the
+optimiser find what differs in the real antenna.*
 
 **What it doesn't do:** NEC-2 models wires and simple surface patches, not
 dielectrics or solid structures such as patch antennas and horns.
