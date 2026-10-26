@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.xxthekippersxx.straws</id>
+  <name>STRAWS</name>
+  <summary>Design, model and optimise wire antennas</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <description>
+    <p>
+      STRAWS is a fast NEC-2 antenna modeller. Draw antennas in 3D or start
+      from a template, sweep them live, and see radiation patterns, SWR,
+      impedance and Smith charts. It tunes designs with an optimiser, designs
+      matching networks and phased-array feeds, and opens 4nec2 decks.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.xxthekippersxx.straws.desktop</launchable>
+  <url type="homepage">https://github.com/xXTheKippersXx/straws</url>
+  <categories>
+    <category>Science</category>
+    <category>Engineering</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+</component>

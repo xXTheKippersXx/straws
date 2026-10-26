@@ -25,5 +25,55 @@ png = "0.18"
 # Already built as part of eframe (its settings file); used for project files.
 ron = "0.12"
 
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [lints]
 workspace = true
+
+# Ready-made downloads: `cargo packager --release -p straws-gui` (Windows
+# installer, macOS .app and .dmg, Linux .deb and AppImage).
+[package.metadata.packager]
+productName = "STRAWS"
+identifier = "io.github.xxthekippersxx.straws"
+description = "A fast NEC-2 antenna modeller"
+longDescription = "Design, model and optimise wire antennas with the NEC-2 method: draw in 3D, sweep live, see patterns, SWR and Smith charts, tune with the optimiser."
+homepage = "https://github.com/xXTheKippersXx/straws"
+authors = ["The STRAWS contributors"]
+publisher = "STRAWS"
+licenseFile = "../../LICENSE"
+icons = [
+    "icons/32x32.png",
+    "icons/128x128.png",
+    "icons/256x256.png",
+    "icons/512x512.png",
+    "icons/straws.icns",
+    "icons/straws.ico",
+]
+binaries = [{ path = "straws", main = true }]
+outDir = "../../target/packages"
+fileAssociations = [
+    { extensions = ["straws"], name = "STRAWS project", description = "STRAWS antenna project", role = "editor", mimeType = "application/x-straws" },
+]
+
+[package.metadata.packager.nsis]
+installMode = "currentUser"
+installerIcon = "icons/straws.ico"
+
+[package.metadata.packager.deb]
+section = "hamradio"
+depends = ["libxkbcommon0", "libwayland-client0", "libx11-6", "libxcursor1", "libxi6", "libxrandr2", "libgl1"]
+
+# The .rpm: `cargo generate-rpm -p crates/straws-gui` after a release build.
+[package.metadata.generate-rpm]
+name = "straws"
+summary = "A fast NEC-2 antenna modeller"
+assets = [
+    { source = "target/release/straws", dest = "/usr/bin/straws", mode = "755" },
+    { source = "packaging/linux/io.github.xxthekippersxx.straws.desktop", dest = "/usr/share/applications/io.github.xxthekippersxx.straws.desktop", mode = "644" },
+    { source = "crates/straws-gui/icons/256x256.png", dest = "/usr/share/icons/hicolor/256x256/apps/io.github.xxthekippersxx.straws.png", mode = "644" },
+    { source = "packaging/linux/io.github.xxthekippersxx.straws.metainfo.xml", dest = "/usr/share/metainfo/io.github.xxthekippersxx.straws.metainfo.xml", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+libxkbcommon = "*"

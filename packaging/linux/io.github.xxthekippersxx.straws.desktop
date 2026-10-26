@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=STRAWS
+GenericName=Antenna modeller
+Comment=Design, model and optimise wire antennas (NEC-2)
+Exec=straws %f
+Icon=io.github.xxthekippersxx.straws
+Terminal=false
+Categories=Science;Engineering;HamRadio;
+Keywords=antenna;NEC;NEC-2;radio;ham;4nec2;

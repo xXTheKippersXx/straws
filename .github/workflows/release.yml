@@ -1,0 +1,165 @@
+name: Release
+
+# Builds the ready-made downloads. A tag like v0.2.0 puts them in a draft
+# release (published by hand after a look); "Run workflow" builds them as
+# artifacts only, to try them.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager
+      - name: Build
+        run: cargo build --release --locked -p straws-gui
+      - name: Installer
+        run: cargo packager --release -p straws-gui --formats nsis
+      - name: Collect
+        shell: pwsh
+        run: |
+          $v = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq 'straws-gui' | Select-Object -ExpandProperty version
+          New-Item -ItemType Directory -Force out | Out-Null
+          Get-ChildItem target/packages -Recurse -Filter *.exe | ForEach-Object { Copy-Item $_.FullName "out/STRAWS-$v-windows-setup.exe" }
+          New-Item -ItemType Directory -Force portable | Out-Null
+          Copy-Item target/release/straws.exe portable/STRAWS.exe
+          Copy-Item LICENSE portable/LICENSE.txt
+          Compress-Archive -Path portable/* -DestinationPath "out/STRAWS-$v-windows-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+
+  macos:
+    name: macOS (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            name: apple-silicon
+          - target: x86_64-apple-darwin
+            name: intel
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager
+      - name: Build
+        run: cargo build --release --locked -p straws-gui --target ${{ matrix.target }}
+      - name: App and disk image
+        run: cargo packager --release -p straws-gui --target ${{ matrix.target }} --formats dmg
+      - name: Collect
+        run: |
+          v=$(cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='straws-gui'))")
+          mkdir -p out
+          find target/packages -name '*.dmg' -exec cp {} "out/STRAWS-$v-macos-${{ matrix.name }}.dmg" \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.name }}
+          path: out/*
+
+  linux:
+    name: Linux
+    # The oldest supported runner: the program then runs on older systems too.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Windowing libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libfuse2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-packager,cargo-generate-rpm
+      - name: Build
+        run: cargo build --release --locked -p straws-gui
+      - name: Debian package and AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: cargo packager --release -p straws-gui --formats deb,appimage
+      - name: RPM package
+        run: cargo generate-rpm -p crates/straws-gui
+      - name: Collect
+        run: |
+          v=$(cargo metadata --no-deps --format-version 1 | python3 -c "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='straws-gui'))")
+          mkdir -p out
+          find target/packages -name '*.deb' -exec cp {} "out/STRAWS-$v-linux-amd64.deb" \;
+          find target/packages -name '*.AppImage' -exec cp {} "out/STRAWS-$v-linux-x86_64.AppImage" \;
+          find target/generate-rpm -name '*.rpm' -exec cp {} "out/STRAWS-$v-linux-x86_64.rpm" \;
+          cp target/release/straws out/straws-linux-binary
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            out/*.deb
+            out/*.AppImage
+            out/*.rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary
+          path: out/straws-linux-binary
+
+  flatpak:
+    name: Flatpak
+    needs: linux
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-binary
+          path: target/release
+      - run: mv target/release/straws-linux-binary target/release/straws && chmod +x target/release/straws
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: STRAWS-linux.flatpak
+          manifest-path: packaging/linux/io.github.xxthekippersxx.straws.yml
+          cache: false
+          upload-artifact: false
+      - name: Name it with the version
+        run: |
+          v=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+          mkdir -p out && mv STRAWS-linux.flatpak "out/STRAWS-$v-linux.flatpak"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: out/*
+
+  release:
+    name: Draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos, linux, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloads
+          pattern: "{windows,macos-*,linux,flatpak}"
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: downloads/*

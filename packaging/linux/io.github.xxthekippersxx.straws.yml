@@ -1,0 +1,34 @@
+# Flatpak of STRAWS, made from the Linux release build (target/release/straws):
+#   flatpak-builder --user --install-deps-from=flathub --repo=repo build-dir \
+#       packaging/linux/io.github.xxthekippersxx.straws.yml
+#   flatpak build-bundle repo STRAWS.flatpak io.github.xxthekippersxx.straws
+app-id: io.github.xxthekippersxx.straws
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: straws
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Decks and projects live anywhere in the home folder (recent files,
+  # dropped files and command-line files need it, not just the file dialogs).
+  - --filesystem=home
+modules:
+  - name: straws
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 straws /app/bin/straws
+      - install -Dm644 io.github.xxthekippersxx.straws.desktop /app/share/applications/io.github.xxthekippersxx.straws.desktop
+      - install -Dm644 256x256.png /app/share/icons/hicolor/256x256/apps/io.github.xxthekippersxx.straws.png
+      - install -Dm644 io.github.xxthekippersxx.straws.metainfo.xml /app/share/metainfo/io.github.xxthekippersxx.straws.metainfo.xml
+    sources:
+      - type: file
+        path: ../../target/release/straws
+      - type: file
+        path: io.github.xxthekippersxx.straws.desktop
+      - type: file
+        path: ../../crates/straws-gui/icons/256x256.png
+      - type: file
+        path: io.github.xxthekippersxx.straws.metainfo.xml
