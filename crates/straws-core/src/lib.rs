@@ -5,6 +5,7 @@
 pub mod analysis;
 pub mod bands;
 pub mod deck;
+pub mod dxf;
 pub mod engine;
 pub mod export;
 pub mod optimise;

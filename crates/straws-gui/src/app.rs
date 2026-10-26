@@ -308,6 +308,12 @@ pub enum Request {
 }
 
 /// Whether a file is a measured sweep (Touchstone) rather than a deck.
+fn is_drawing_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("dxf"))
+}
+
+/// Whether a file is a measured sweep (Touchstone) rather than a deck.
 fn is_sweep_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| straws_core::analysis::measured::ports_from_name(&n.to_string_lossy()))
@@ -422,6 +428,8 @@ pub struct App {
     help: Option<HelpPage>,
     /// The editor for the user's own bands is open.
     editing_bands: bool,
+    /// A CAD drawing being imported (its dialog is open).
+    cad_import: Option<crate::views::cadimport::CadImport>,
     /// The zoom last applied, to notice Ctrl + / Ctrl - changing it.
     applied_zoom: f32,
     /// The view a requested screenshot is cropped to (None: whole window).
@@ -441,6 +449,8 @@ enum HelpPage {
 /// What a file dialog was opened for.
 enum DialogKind {
     Open,
+    /// Read a CAD drawing.
+    ImportDrawing,
     /// Read a measured sweep.
     Import,
     /// Write these bytes to the chosen file.
@@ -558,6 +568,7 @@ impl App {
             allow_close: false,
             help: None,
             editing_bands: false,
+            cad_import: None,
             applied_zoom: 1.0,
             crop: None,
             last_title: String::new(),
@@ -571,11 +582,16 @@ impl App {
         }
         // The deck first, so the sweeps' message comes after it.
         let (sweeps, decks): (Vec<_>, Vec<_>) = open.into_iter().partition(|p| is_sweep_file(p));
+        let (drawings, decks): (Vec<_>, Vec<_>) =
+            decks.into_iter().partition(|p| is_drawing_file(p));
         if let Some(path) = decks.first() {
             app.open(path);
         }
         for path in &sweeps {
             app.import_measurement(path);
+        }
+        if let Some(path) = drawings.first() {
+            app.import_drawing(path);
         }
         app
     }
@@ -1120,6 +1136,7 @@ impl App {
         match (kind, answer) {
             (DialogKind::Open, Some(p)) => self.open(&p),
             (DialogKind::Import, Some(p)) => self.import_measurement(&p),
+            (DialogKind::ImportDrawing, Some(p)) => self.import_drawing(&p),
             (DialogKind::Export(bytes), Some(p)) => match std::fs::write(&p, bytes) {
                 Ok(()) => self
                     .data
@@ -1701,6 +1718,108 @@ impl App {
         }
     }
 
+    fn import_drawing_dialog(&mut self) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let mut dialog = rfd::FileDialog::new()
+            .add_filter("DXF drawings", &["dxf", "DXF"])
+            .add_filter("All files", &["*"]);
+        if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
+            dialog = dialog.set_directory(dir);
+        }
+        self.run_dialog(DialogKind::ImportDrawing, move || dialog.pick_file());
+    }
+
+    /// Reads a DXF drawing and opens the import dialog for it.
+    fn import_drawing(&mut self, path: &std::path::Path) {
+        let file = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let read = std::fs::read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                crate::views::cadimport::CadImport::new(
+                    file.clone(),
+                    String::from_utf8_lossy(&bytes).into_owned(),
+                    // The sweep's top, as the toolbar has it (also with no model open).
+                    self.plan_edit.stop_mhz.max(0.001),
+                    self.data.model.is_some(),
+                )
+            });
+        match read {
+            Ok(import) => self.cad_import = Some(import),
+            Err(e) => self.data.message(
+                Level::Error,
+                format!("Couldn't import {file} as a drawing: {e}"),
+            ),
+        }
+    }
+
+    /// Shows the drawing import dialog while one is being set up, and does
+    /// the import when asked.
+    fn drawing_dialog(&mut self, ctx: &egui::Context) {
+        use crate::views::cadimport::Outcome;
+        let Some(import) = &mut self.cad_import else {
+            return;
+        };
+        match import.ui(ctx, self.data.model.is_some()) {
+            Outcome::Open => {}
+            Outcome::Cancel => self.cad_import = None,
+            Outcome::Import {
+                wires,
+                radius,
+                mhz,
+                new_model,
+            } => {
+                let file = import.file.clone();
+                self.cad_import = None;
+                let first = if new_model {
+                    1
+                } else {
+                    self.data.model.as_ref().map_or(1, |m| m.next_tag())
+                };
+                let cards: Vec<_> = wires
+                    .iter()
+                    .enumerate()
+                    .map(|(k, w)| {
+                        let length = (0..3)
+                            .map(|i| (w.b[i] - w.a[i]).powi(2))
+                            .sum::<f64>()
+                            .sqrt();
+                        straws_core::deck::edit::NewWire {
+                            tag: first + k as i64,
+                            segments: crate::views::wires::auto_segments(length, mhz),
+                            a: w.a,
+                            b: w.b,
+                            radius,
+                            comment: Some(w.layer.clone()),
+                        }
+                    })
+                    .collect();
+                let message = format!(
+                    "Imported {} wires from {file}. To run it, feed a wire: select it, then Feed this wire (Wires view, or right-click it in the 3D view).",
+                    cards.len()
+                );
+                if new_model {
+                    let mut deck = straws_core::deck::Deck::parse(&format!(
+                        "CM Imported from {file}\nCE\nGE 0\nGN -1\nFR 0 1 0 0 {mhz} 0\nEN\n"
+                    ));
+                    deck.add_wires(&cards);
+                    let name = std::path::Path::new(&file)
+                        .file_stem()
+                        .map_or("Imported".into(), |s| s.to_string_lossy().into_owned());
+                    self.leave(Leave::Text(name, deck.to_text()));
+                } else if let Some(m) = &mut self.data.model {
+                    m.deck.add_wires(&cards);
+                    self.data.edit_event = Some(true);
+                }
+                self.data.message(Level::Info, message);
+            }
+        }
+    }
+
     fn open_dialog(&mut self) {
         if self.dialog.is_some() {
             return;
@@ -1796,6 +1915,16 @@ impl App {
                 {
                     ui.close();
                     self.import_dialog();
+                }
+                if ui
+                    .button("Import a CAD drawing (DXF)…")
+                    .on_hover_text(
+                        "Lines, arcs, circles and splines from a wire-frame drawing become wires",
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                    self.import_drawing_dialog();
                 }
                 ui.separator();
                 if ui.button("Quit").clicked() {
@@ -2224,6 +2353,8 @@ impl eframe::App for App {
         if let Some(p) = dropped {
             if is_sweep_file(&p) {
                 self.import_measurement(&p);
+            } else if is_drawing_file(&p) {
+                self.import_drawing(&p);
             } else {
                 self.leave(Leave::Open(p));
             }
@@ -2239,6 +2370,7 @@ impl eframe::App for App {
         self.help_ui(&ctx);
         crate::views::newvar::prompt(&ctx, &mut self.data);
         crate::views::bands::editor(&ctx, &mut self.settings, &mut self.editing_bands);
+        self.drawing_dialog(&ctx);
         let title = match &self.data.model {
             Some(m) if self.changed() => {
                 format!("• {} — STRAWS (changed)", m.name)

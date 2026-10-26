@@ -16,6 +16,17 @@ With nothing open, the 3D model view offers three ways in:
   *Top* choose the plane you draw on. Then select the wire to feed and click
   *Feed this wire* in the Wires view.
 - **Open a deck**: any `.nec` file, including 4nec2's.
+- **Import a drawing**: File > Import a CAD drawing (DXF), or drop a `.dxf`
+  file on the window. Lines, polylines (with their arcs), arcs, circles,
+  ellipses and splines become wires; curves are cut into straight pieces
+  (10° each unless you choose otherwise). Check the units (the file usually
+  says; the overall size shown tells you if they're wrong), set the wire
+  diameter and the highest frequency (for the segment lengths), and untick
+  layers you don't want, such as dimensions. Ends closer than the join
+  distance become one point, so wires that touch in the drawing are joined.
+  Each wire is named after its layer. Text, dimensions, hatches and block
+  references are left out: explode blocks in your CAD program first. The
+  wires go into a new model or the open one; then feed one to run it.
 
 ## Editing
 - **3D model**: in *Select*, click a wire to select it (Ctrl-click for more)

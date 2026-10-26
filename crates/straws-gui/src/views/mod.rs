@@ -1,6 +1,7 @@
 //! The dockable views.
 
 pub mod bands;
+pub mod cadimport;
 mod checks;
 pub mod compare;
 pub mod curves;

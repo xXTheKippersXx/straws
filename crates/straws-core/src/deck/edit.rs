@@ -124,6 +124,18 @@ pub fn wires(deck: &Deck, numeric: &NumericDeck) -> Vec<Wire> {
 }
 
 /// A card line in 4nec2's tab-separated style, keeping a trailing comment.
+/// A straight wire to add (see [`Deck::add_wires`]): ends in metres, and a
+/// comment for its GW card (it names the wire).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewWire {
+    pub tag: i64,
+    pub segments: i64,
+    pub a: [f64; 3],
+    pub b: [f64; 3],
+    pub radius: f64,
+    pub comment: Option<String>,
+}
+
 pub fn card_line(mnemonic: &str, fields: &[String], comment: Option<&str>) -> String {
     let mut raw = mnemonic.to_string();
     for f in fields {
@@ -269,6 +281,26 @@ impl Deck {
         let at = self.geometry_end();
         self.insert_lines(at, &[card_line("GW", &fields, None)]);
         at
+    }
+
+    /// Adds many straight wires at once, where [`Deck::add_wire`] would
+    /// put each.
+    pub fn add_wires(&mut self, wires: &[NewWire]) {
+        let lines: Vec<String> = wires
+            .iter()
+            .map(|w| {
+                let fields: Vec<String> = [w.tag as f64, w.segments as f64]
+                    .into_iter()
+                    .chain(w.a)
+                    .chain(w.b)
+                    .chain([w.radius])
+                    .map(|v| format_real(if v.abs() < 1e-12 { 0.0 } else { v }))
+                    .collect();
+                card_line("GW", &fields, w.comment.as_deref())
+            })
+            .collect();
+        let at = self.geometry_end();
+        self.insert_lines(at, &lines);
     }
 
     /// Feeds the centre of wire `tag`: moves the first EX card there, or

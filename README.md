@@ -34,7 +34,9 @@ through 30 m of RG-213, and the optimiser ready to tune the elements.*
   vertical with radials, phased verticals, loop, quad, Yagi, Moxon, log-periodic,
   helix, J-pole), by drawing wires in 3D (snapping to a grid and to wire ends),
   in the wire table with exact numbers in m, cm, mm, ft, in or wavelengths, or
-  as `.nec` text. Arcs (two ends and a bend, snapping to 15° steps),
+  as `.nec` text, or by importing a wire-frame drawing from a CAD program (DXF:
+  lines, polylines, arcs, circles, ellipses and splines, layer by layer, with
+  touching ends joined). Arcs (two ends and a bend, snapping to 15° steps),
   semicircles, circles, helices and spirals are drawn in 3D too. All four
   stay in step. Every template dimension is a variable
   with a live slider, and any number, length, spacing, height or angle can be
@@ -122,7 +124,8 @@ straws-cli bench benchmarks --engine-dir C:\4nec2\exe
 Run `straws-cli help` for everything else.
 
 ## Plans
-- CAD import (DXF wire-frames first).
+- CAD import of solid models (STEP/STL tubes reduced to wires), and plates or
+  dishes from CAD as wire grids.
 - STEP export straight from the app (for now: STL, which FreeCAD turns into a
   solid and saves as STEP) and a native PDF report (for now: print the report
   page to PDF).
