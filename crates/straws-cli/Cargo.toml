@@ -1,0 +1,15 @@
+[package]
+name = "straws-cli"
+description = "Command-line tool for the NEC antenna modeller: run decks, validate, benchmark"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+straws-core = { path = "../straws-core" }
+clap = { version = "4", features = ["derive"] }
+
+[lints]
+workspace = true

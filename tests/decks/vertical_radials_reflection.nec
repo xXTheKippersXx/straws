@@ -1,0 +1,14 @@
+CM Quarter-wave 20 m vertical with four elevated radials (one radial
+CM copied round with GR, then the vertical), over finite ground
+CM (reflection coefficient method).
+CE
+SY h=3, L=5.1, R=5.3
+GW 2 9 0 0 h R 0 h-1 2mm
+GR 1 4
+GW 1 9 0 0 h 0 0 h+L 12.5mm
+GE 1
+GN 0 0 0 0 13 0.005
+EX 0 1 1 0 1 0
+FR 0 3 0 0 14.0 0.15
+RP 0 10 9 1000 0 0 10 45
+EN

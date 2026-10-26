@@ -1,0 +1,13 @@
+CM Small circular loop built with GA, plus an axial-mode helix built
+CM with GH (moved clear of the loop with GM).
+CE
+GA 1 24 0.5 0 360 2mm
+GM 0 0 90 0 0 0 0 0 1
+GH 2 60 0.25 1.5 0.12 0.12 0.12 0.12 1mm
+GM 0 0 0 0 0 3 0 0 2
+GE 0
+EX 0 1 1 0 1 0
+EX 0 2 1 0 1 0
+FR 0 2 0 0 100 50
+RP 0 5 5 1000 0 0 45 90
+EN

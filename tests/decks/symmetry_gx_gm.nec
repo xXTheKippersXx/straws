@@ -1,0 +1,13 @@
+CM Dipole with folded-back ends built from one half with GX reflection,
+CM then rotated and lifted with GM, over perfect ground.
+CE
+GW 1 7 0 0 0 2.6 0 0 1mm
+GW 2 2 2.6 0 0 2.6 0.3 0 1mm
+GX 10 100
+GM 0 0 30 0 45 0 0 8 0
+GE 1
+GN 1
+EX 0 1 1 0 1 0
+FR 0 1 0 0 28.5 0
+RP 0 10 9 1000 0 0 10 45
+EN

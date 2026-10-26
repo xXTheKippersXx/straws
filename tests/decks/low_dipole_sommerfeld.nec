@@ -1,0 +1,12 @@
+CM Low 80 m dipole, 3 m above average ground (Sommerfeld-Norton).
+CM Exercises the Sommerfeld contour and convergence fixes in nec2c's
+CM somnec (evlua and gshank).
+CE
+SY L=39.6, h=3
+GW 1 41 0 -L/2 h 0 L/2 h #12
+GE 1
+GN 2 0 0 0 13 0.005
+EX 0 1 21 0 1 0
+FR 0 3 0 0 3.5 0.15
+RP 0 10 9 1000 0 0 10 45
+EN

@@ -1,0 +1,13 @@
+CM 80 m vertical with four radials 0.5 m above poor ground
+CM (Sommerfeld-Norton): wires close to ground in wavelengths.
+CE
+SY h=0.5, L=19.6, R=20.5
+GW 2 9 0 0 h R 0 h 2mm
+GR 1 4
+GW 1 15 0 0 h 0 0 h+L 25mm
+GE 1
+GN 2 0 0 0 5 0.001
+EX 0 1 1 0 1 0
+FR 0 2 0 0 3.6 0.2
+RP 0 10 9 1000 0 0 10 45
+EN

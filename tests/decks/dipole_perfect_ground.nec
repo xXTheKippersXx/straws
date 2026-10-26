@@ -1,0 +1,10 @@
+CM Horizontal 40 m dipole 12 m above perfect ground.
+CE
+SY len=20.4, h=12
+GW 1 31 -len/2 0 h len/2 0 h #14
+GE 1
+GN 1
+EX 0 1 16 0 1 0
+FR 0 3 0 0 7.0 0.1
+RP 0 10 2 1000 0 0 10 90
+EN

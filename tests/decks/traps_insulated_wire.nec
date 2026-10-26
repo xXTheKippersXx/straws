@@ -1,0 +1,16 @@
+CM 40/20 m trap dipole using 4nec2's LC-trap load (LD 6, coil Q 150)
+CM in insulated wire (LD 7, PVC over #14).
+CE
+SY inner=5.0, trap=0.1, outer=3.7, h=12
+GW 1 13 0 -inner-trap-outer h 0 -inner-trap h #14
+GW 2 1 0 -inner-trap h 0 -inner h #14
+GW 3 21 0 -inner h 0 inner h #14
+GW 4 1 0 inner h 0 inner+trap h #14
+GW 5 13 0 inner+trap h 0 inner+trap+outer h #14
+GE 0
+LD 6 2 1 1 150 4.7uH 52pF
+LD 6 4 1 1 150 4.7uH 52pF 14.2
+LD 7 0 0 0 3.2 1.5mm
+EX 0 3 11 0 1 0
+FR 0 2 0 0 7.1 7.1
+EN

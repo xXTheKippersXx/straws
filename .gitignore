@@ -1,0 +1,15 @@
+# Build output
+/target/
+
+# Editor and OS clutter
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local test decks (not ours to redistribute)
+/nec-examples-test/
+
+# Demo screenshots and models made by driving the app (kept locally)
+demo/

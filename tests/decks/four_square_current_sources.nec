@@ -1,0 +1,17 @@
+CM Four-square array of 40 m verticals driven by 4nec2 current sources
+CM (EX 6) over real ground, phased for an end-fire pattern.
+CE
+SY S=10.6/2, H=10.3, r=25mm
+GW 1 9 -S -S 0 -S -S H r
+GW 2 9 -S S 0 -S S H r
+GW 3 9 S S 0 S S H r
+GW 4 9 S -S 0 S -S H r
+GE 1
+GN 2 0 0 0 13 0.005
+EX 6 1 1 0 1 0
+EX 6 2 1 0 0 -1
+EX 6 4 1 0 0 -1
+EX 6 3 1 0 -1 0
+FR 0 1 0 0 7.1 0
+RP 0 10 25 1000 0 0 10 15
+EN

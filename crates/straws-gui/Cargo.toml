@@ -1,0 +1,27 @@
+[package]
+name = "straws-gui"
+description = "Desktop app for the NEC antenna modeller"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "straws"
+path = "src/main.rs"
+
+[dependencies]
+straws-core = { path = "../straws-core" }
+eframe = { version = "0.36", features = ["persistence"] }
+egui_dock = { version = "0.21", features = ["serde"] }
+egui_plot = "0.37"
+rfd = "0.17"
+serde = { version = "1", features = ["derive"] }
+bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.34", features = ["bytemuck"] }
+# Already built as part of eframe; used directly to save screenshots.
+png = "0.18"
+
+[lints]
+workspace = true

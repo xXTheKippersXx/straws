@@ -1,0 +1,9 @@
+CM Odd but accepted deck details: a second field on GE (nec2c used
+CM to crash on it) and a trailing NX card.
+CE
+GW 1 15 0 0 -2.5 0 0 2.5 3mm
+GE 0 -1 0
+EX 0 1 8 0 1 0
+FR 0 1 0 0 28.0 0
+RP 0 10 1 1000 0 0 10 0
+NX

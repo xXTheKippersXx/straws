@@ -1,0 +1,32 @@
+CM Patch strips: a closed 0.2 m box of surface patches (SP + SC strips round
+CM the sides, SM on the top and bottom) with a vertical half-wave dipole beside it.
+CM Each extra SC card after an SP's own SC adds a patch joined to the one before.
+CE
+SP 0 3 0.1 -0.1 0 0.1 -0.1 -0.1
+SC 0 3 0.1 0 -0.1 0.1 0 0
+SC 0 3 0.1 0.1 -0.1 0.1 0.1 0
+SC 0 3 0 0.1 -0.1 0 0.1 0
+SC 0 3 -0.1 0.1 -0.1 -0.1 0.1 0
+SC 0 3 -0.1 0 -0.1 -0.1 0 0
+SC 0 3 -0.1 -0.1 -0.1 -0.1 -0.1 0
+SC 0 3 0 -0.1 -0.1 0 -0.1 0
+SC 0 3 0.1 -0.1 -0.1 0.1 -0.1 0
+SP 0 3 0.1 -0.1 0.1 0.1 -0.1 0
+SC 0 3 0.1 0 0 0.1 0 0.1
+SC 0 3 0.1 0.1 0 0.1 0.1 0.1
+SC 0 3 0 0.1 0 0 0.1 0.1
+SC 0 3 -0.1 0.1 0 -0.1 0.1 0.1
+SC 0 3 -0.1 0 0 -0.1 0 0.1
+SC 0 3 -0.1 -0.1 0 -0.1 -0.1 0.1
+SC 0 3 0 -0.1 0 0 -0.1 0.1
+SC 0 3 0.1 -0.1 0 0.1 -0.1 0.1
+SM 2 2 -0.1 -0.1 0.1 0.1 -0.1 0.1
+SC 0 0 0.1 0.1 0.1
+SM 2 2 -0.1 -0.1 -0.1 -0.1 0.1 -0.1
+SC 0 0 0.1 0.1 -0.1
+GW 1 11 0.25 0 -0.24 0.25 0 0.24 0.002
+GE 0
+EX 0 1 6 0 1
+FR 0 3 0 0 290 10
+RP 0 19 37 1000 0 0 10 10
+EN

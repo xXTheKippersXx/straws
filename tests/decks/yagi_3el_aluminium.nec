@@ -1,0 +1,12 @@
+CM Three-element 20 m Yagi in free space, aluminium tube (LD 5).
+CE
+SY f=14.15, refl=10.6, drv=10.15, dir=9.6, s1=3.2, s2=3.6, r=12.7mm
+GW 1 21 -s1 -refl/2 0 -s1 refl/2 0 r/2
+GW 2 21 0 -drv/2 0 0 drv/2 0 r/2
+GW 3 21 s2 -dir/2 0 s2 dir/2 0 r/2
+GE 0
+LD 5 0 0 0 3.5E7
+EX 0 2 11 0 1 0
+FR 0 7 0 0 13.9 0.1
+RP 0 1 37 1000 90 0 0 10
+EN

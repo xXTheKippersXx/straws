@@ -1,0 +1,14 @@
+CM Thin, lossy wires: a 160 m copper dipole (#18) beside a passive
+CM nichrome wire. Exercises both thin-wire skin-effect formulas in
+CM NEC's internal impedance calculation (the nec2c zint fix).
+CE
+SY L=78, h=15, s=1.5
+GW 1 41 0 -L/2 h 0 L/2 h #18
+GW 2 41 s -L/2 h s L/2 h 0.2mm
+GE 0
+LD 5 1 0 0 5.8E7
+LD 5 2 0 0 9E5
+EX 0 1 21 0 1 0
+FR 0 3 0 0 1.80 0.05
+XQ
+EN

@@ -1,0 +1,8 @@
+CM Benchmark: 21-segment dipole, 101-point sweep, free space.
+CE
+GW 1 21 0 -5.014134 0 0 5.014134 0 0.001
+GE 0
+EX 0 1 11 0 1 0
+FR 0 101 0 0 13.2 0.02
+XQ
+EN

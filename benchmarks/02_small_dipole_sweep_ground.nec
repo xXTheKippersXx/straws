@@ -1,0 +1,10 @@
+CM Benchmark: 21-segment dipole 10 m up, 101-point sweep,
+CM Sommerfeld-Norton ground.
+CE
+GW 1 21 0 -5.014134 10 0 5.014134 10 0.001
+GE 1
+GN 2 0 0 0 13 0.005
+EX 0 1 11 0 1 0
+FR 0 101 0 0 13.2 0.02
+XQ
+EN

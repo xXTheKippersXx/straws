@@ -1,0 +1,10 @@
+CM Short vertical over 4nec2's MININEC-style ground (GN 3, converted to
+CM GN 1 plus GD), with a logarithmic frequency sweep (FR 1).
+CE
+GW 1 15 0 0 0.5 0 0 6.5 10mm
+GE 1
+GN 3 0 0 0 10 0.002
+LD 4 1 1 1 25
+EX 0 1 1 0 1 0
+FR 1 6 0 0 3.5 1.25
+EN

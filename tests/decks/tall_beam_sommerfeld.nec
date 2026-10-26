@@ -1,0 +1,19 @@
+CM Two-element 80 m beam with dropped ends: top wires 28 m up, ends
+CM hanging down to 8 m, 14 m element spacing, over average ground
+CM (Sommerfeld-Norton). Distances and heights fall where nec2c's
+CM unfixed Sommerfeld contour (evlua) gave wrong answers.
+CE
+SY top=28, drop=20, half=20.5, sp=14, r=1.5mm
+GW 1 10 -half 0 top-drop -half 0 top r
+GW 2 21 -half 0 top half 0 top r
+GW 3 10 half 0 top half 0 top-drop r
+GW 4 10 -half sp top-drop -half sp top r
+GW 5 21 -half sp top half sp top r
+GW 6 10 half sp top half sp top-drop r
+GE 1
+LD 4 5 11 11 0 60
+GN 2 0 0 0 13 0.005
+EX 0 2 11 0 1 0
+FR 0 2 0 0 3.55 0.1
+RP 0 10 9 1000 0 0 10 45
+EN

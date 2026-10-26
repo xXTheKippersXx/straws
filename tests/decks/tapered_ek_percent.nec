@@ -1,0 +1,12 @@
+CM Thick dipole with the extended thin-wire kernel (EK), a tapered
+CM element (GW radius 0 + GC) and a feed given as a percentage (50%).
+CE
+GW 1 21 0 -0.53 0 0 0.53 0 15mm
+GW 2 19 0.4 -0.5 0 0.4 0.5 0 0
+GC 0 0 0.95 3mm 8mm
+GE 0
+EK
+EX 0 1 50% 0 1 0
+FR 0 3 0 0 135 5
+XQ
+EN

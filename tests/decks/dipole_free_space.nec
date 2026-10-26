@@ -1,0 +1,9 @@
+CM Half-wave dipole for 20 m in free space, swept across the band.
+CE
+SY len=10.2, segs=21
+GW 1 segs 0 -len/2 0 0 len/2 0 1mm
+GE 0
+EX 0 1 11 0 1 0
+FR 0 5 0 0 13.8 0.2
+RP 0 19 2 1000 0 0 10 90
+EN

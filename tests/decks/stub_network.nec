@@ -1,0 +1,11 @@
+CM Dipole fed through a transmission line stub and a two-port network.
+CE
+GW 1 21 0 -5.0 10 0 5.0 10 1mm
+GW 2 1 0 0 0 0 0 0.01 1mm
+GW 3 1 1 0 0 1 0 0.01 1mm
+GE 0
+TL 1 11 2 1 300 3.0 0 0 0 0
+NT 2 1 3 1 0.002 -0.001 0 0.004 0.003 0
+EX 0 3 1 0 1 0
+FR 0 3 0 0 14.0 0.2
+EN

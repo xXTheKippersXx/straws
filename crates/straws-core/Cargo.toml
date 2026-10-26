@@ -1,0 +1,18 @@
+[package]
+name = "straws-core"
+description = "Model, NEC engine wrapper, analysis and optimiser for the NEC antenna modeller"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+num-complex = "0.4"
+faer = { version = "0.24", default-features = false, features = ["std", "rayon"] }
+
+[build-dependencies]
+cc = "1"
+
+[lints]
+workspace = true
