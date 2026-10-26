@@ -364,6 +364,14 @@ joined wire ends too* in the prompt if you don't want that).
   against the design separately. On a cable matching the radio's impedance its
   length then makes no difference; on a different one (75 Ω coax, ladder line
   to a tuner) it transforms the impedance and is worth tuning.
+  *Match a measurement* fits the model to a VNA sweep you've imported
+  (Compare view): it compares the reflection coefficients at 21 frequencies
+  within the sweep (use *Sweep this range* in the Compare view first if they
+  don't overlap) and reports the RMS difference (0 = identical; under 0.05 is
+  close). Tick the variables that could really differ from what you built:
+  element lengths, height, the ground's permittivity and conductivity, a
+  loss. The fitted values tell you what the real antenna is like, for example
+  how much longer it behaves than you cut it, or what your ground is.
   *Low common-mode current* keeps the current on the outside of the coax
   under a share of the feed current at a frequency. Model the shield first
   (Feedline view, *Model the shield*; the goal shows ⚠ until you do), and

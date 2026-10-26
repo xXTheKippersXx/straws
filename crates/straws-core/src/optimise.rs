@@ -20,6 +20,7 @@
 //! other, wires below the ground, or bigger than the build limits) are
 //! skipped: they get the cost of a design that failed to run.
 
+use num_complex::Complex64;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -94,6 +95,20 @@ pub enum Goal {
     /// top of the shield the Feedline view models) at most `target` per
     /// cent of the feed current, at `mhz`. Needs the shield in the model.
     CommonMode { mhz: f64, target: f64, weight: f64 },
+    /// The feed impedance matches a measurement (`name`): `measured` holds
+    /// the measured impedances at evenly spaced frequencies from `start_mhz`
+    /// to `stop_mhz`. Scored by the RMS difference between the two
+    /// reflection coefficients on `z0` (what a VNA measures), at most
+    /// `target`.
+    Match {
+        name: String,
+        start_mhz: f64,
+        stop_mhz: f64,
+        measured: Vec<Complex64>,
+        z0: f64,
+        target: f64,
+        weight: f64,
+    },
     /// Front-to-back ratio (dB) towards (elevation, azimuth), at least
     /// `target`. With `rear`, front-to-rear: against the strongest
     /// direction anywhere in the back half at that elevation.
@@ -111,15 +126,60 @@ impl Goal {
     pub fn weight(&self) -> f64 {
         match self {
             Goal::Swr { weight, .. }
+            | Goal::Match { weight, .. }
             | Goal::Gain { weight, .. }
             | Goal::CommonMode { weight, .. }
             | Goal::FrontToBack { weight, .. } => *weight,
         }
     }
 
+    /// A goal to match a measured sweep with `n` frequencies evenly spread
+    /// over `start_mhz`..`stop_mhz` (kept within the measurement), the
+    /// measured impedance at each interpolated. `None` when the range misses
+    /// the measurement.
+    pub fn fit_to(
+        name: &str,
+        points: &[crate::analysis::measured::MeasuredPoint],
+        start_mhz: f64,
+        stop_mhz: f64,
+        n: usize,
+        z0: f64,
+    ) -> Option<Goal> {
+        let (first, last) = (points.first()?.mhz, points.last()?.mhz);
+        let (a, b) = (start_mhz.max(first), stop_mhz.min(last));
+        if a.is_nan() || b.is_nan() || a > b {
+            return None;
+        }
+        let n = if b > a { n.max(2) } else { 1 };
+        let plan = FrequencyPlan {
+            start_mhz: a,
+            stop_mhz: b,
+            points: n,
+        };
+        let measured = plan
+            .frequencies()
+            .iter()
+            .map(|&f| crate::analysis::measured::interpolate(points, f))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Goal::Match {
+            name: name.to_string(),
+            start_mhz: a,
+            stop_mhz: b,
+            measured,
+            z0,
+            target: 0.05,
+            weight: 1.0,
+        })
+    }
+
     fn frequencies(&self) -> (f64, f64) {
         match self {
             Goal::Swr {
+                start_mhz,
+                stop_mhz,
+                ..
+            }
+            | Goal::Match {
                 start_mhz,
                 stop_mhz,
                 ..
@@ -144,9 +204,29 @@ impl Goal {
                 points: (*points).max(1),
             }
             .frequencies(),
+            Goal::Match {
+                start_mhz,
+                stop_mhz,
+                measured,
+                ..
+            } => FrequencyPlan {
+                start_mhz: *start_mhz,
+                stop_mhz: stop_mhz.max(*start_mhz),
+                points: measured.len().max(1),
+            }
+            .frequencies(),
             Goal::Gain { mhz, .. }
             | Goal::FrontToBack { mhz, .. }
             | Goal::CommonMode { mhz, .. } => vec![*mhz],
+        }
+    }
+
+    /// How many of the run's frequency results belong to this goal.
+    fn result_count(&self) -> usize {
+        match self {
+            Goal::Swr { points, .. } => (*points).max(1),
+            Goal::Match { measured, .. } => measured.len().max(1),
+            _ => 1,
         }
     }
 
@@ -186,6 +266,15 @@ impl Goal {
             Goal::CommonMode { mhz, target, .. } => {
                 format!("Common-mode current ≤ {target} % of the feed current at {mhz} MHz")
             }
+            Goal::Match {
+                name,
+                start_mhz,
+                stop_mhz,
+                target,
+                ..
+            } => format!(
+                "Match {name} from {start_mhz:.3} to {stop_mhz:.3} MHz (RMS reflection difference ≤ {target})"
+            ),
             Goal::FrontToBack {
                 mhz,
                 elevation,
@@ -344,6 +433,24 @@ pub fn goal_deck(deck: &NumericDeck, goals: &[Goal]) -> NumericDeck {
                     start_mhz: *start_mhz,
                     stop_mhz: stop_mhz.max(*start_mhz),
                     points: (*points).max(1),
+                };
+                run.cards.push(NumCard::new(
+                    "FR",
+                    &[0, plan.points as i64],
+                    &[plan.start_mhz, plan.step_mhz()],
+                ));
+                run.cards.push(NumCard::new("XQ", &[0], &[]));
+            }
+            Goal::Match {
+                start_mhz,
+                stop_mhz,
+                measured,
+                ..
+            } => {
+                let plan = FrequencyPlan {
+                    start_mhz: *start_mhz,
+                    stop_mhz: stop_mhz.max(*start_mhz),
+                    points: measured.len().max(1),
                 };
                 run.cards.push(NumCard::new(
                     "FR",
@@ -524,6 +631,28 @@ fn score_goal(
                 met: worst <= *target,
             })
         }
+        Goal::Match {
+            measured,
+            z0,
+            target,
+            ..
+        } => {
+            if results.len() != measured.len() || measured.is_empty() {
+                return None;
+            }
+            let gamma = |z: Complex64| (z - *z0) / (z + *z0);
+            let mut sum = 0.0f64;
+            for (f, m) in results.iter().zip(measured) {
+                sum += (gamma(f.inputs.first()?.impedance) - gamma(*m)).norm_sqr();
+            }
+            let rms = (sum / measured.len() as f64).sqrt();
+            Some(GoalResult {
+                value: rms,
+                // Always worth closing further: a fit has no "good enough".
+                penalty: 10.0 * rms + 10.0 * (rms - target).max(0.0),
+                met: rms <= *target,
+            })
+        }
         Goal::Gain { target, .. } => {
             let points = &results.first()?.patterns.first()?.points;
             let g = points
@@ -610,10 +739,7 @@ impl Problem {
         let mut results = Vec::new();
         let mut cost = 0.0;
         for goal in &self.goals {
-            let take = match goal {
-                Goal::Swr { points, .. } => (*points).max(1),
-                _ => 1,
-            };
+            let take = goal.result_count();
             if rest.len() < take {
                 return failed();
             }

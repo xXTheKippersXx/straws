@@ -133,6 +133,29 @@ pub fn read_touchstone(text: &str, ports: usize) -> Result<Vec<MeasuredPoint>, S
     Ok(out)
 }
 
+/// The measured impedance at `mhz`, interpolated between the nearest
+/// measurements (`None` outside the measured range).
+pub fn interpolate(points: &[MeasuredPoint], mhz: f64) -> Option<Complex64> {
+    let (first, last) = (points.first()?.mhz, points.last()?.mhz);
+    // Frequencies worked out by steps may miss the ends by a rounding error.
+    let tolerance = 1e-9 * last.abs().max(1.0);
+    let mhz = if (mhz - first).abs() <= tolerance {
+        first
+    } else if (mhz - last).abs() <= tolerance {
+        last
+    } else {
+        mhz
+    };
+    let k = points.partition_point(|p| p.mhz < mhz);
+    let after = points.get(k)?;
+    if after.mhz == mhz {
+        return Some(after.z);
+    }
+    let before = points.get(k.checked_sub(1)?)?;
+    let t = (mhz - before.mhz) / (after.mhz - before.mhz);
+    Some(before.z + (after.z - before.z) * t)
+}
+
 /// The ports a file name says it has (`.s1p` → 1, `.s2p` → 2), if any.
 pub fn ports_from_name(name: &str) -> Option<usize> {
     let lower = name.to_ascii_lowercase();
@@ -229,6 +252,28 @@ mod tests {
         assert!(read_touchstone("# MHz S RI R 0\n7 0 0\n", 1).is_err());
         // An open circuit alone can't be used.
         assert!(read_touchstone("# MHz S RI\n7 1 0\n", 1).is_err());
+    }
+
+    #[test]
+    fn interpolation() {
+        let p = [
+            MeasuredPoint {
+                mhz: 14.0,
+                z: Complex64::new(50.0, -10.0),
+            },
+            MeasuredPoint {
+                mhz: 14.2,
+                z: Complex64::new(70.0, 30.0),
+            },
+        ];
+        assert_eq!(interpolate(&p, 14.0), Some(p[0].z));
+        assert_eq!(interpolate(&p, 14.2), Some(p[1].z));
+        assert!(close(
+            interpolate(&p, 14.05).unwrap(),
+            Complex64::new(55.0, 0.0)
+        ));
+        assert_eq!(interpolate(&p, 13.9), None);
+        assert_eq!(interpolate(&p, 14.3), None);
     }
 
     #[test]

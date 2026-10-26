@@ -113,6 +113,7 @@ fn figure(goal: &Goal, value: f64) -> String {
         Goal::Gain { .. } => format!("{value:.2} dBi"),
         Goal::FrontToBack { .. } => format!("{value:.2} dB"),
         Goal::CommonMode { .. } => format!("{value:.2} % on the shield"),
+        Goal::Match { .. } => format!("RMS reflection difference {value:.4}"),
     }
 }
 
@@ -400,6 +401,30 @@ impl OptimiserView {
                                 ui.label("weight");
                                 num(ui, weight, 0.05, "");
                             }
+                            Goal::Match {
+                                name,
+                                start_mhz,
+                                stop_mhz,
+                                measured,
+                                target,
+                                weight,
+                                ..
+                            } => {
+                                ui.label(format!(
+                                    "Match {name} from {start_mhz:.3} to {stop_mhz:.3} MHz ({} points): RMS reflection difference at most",
+                                    measured.len()
+                                ))
+                                .on_hover_text(
+                                    "How far the model's reflection coefficient is from the measured one, on average over \
+                                     the points (0 = identical, 0.05 = close, 2 = opposite). Tick the variables that could \
+                                     differ in the real antenna: lengths, height, the ground's permittivity and \
+                                     conductivity, wire or load losses.",
+                                );
+                                num(ui, target, 0.005, "");
+                                ui.label("weight");
+                                num(ui, weight, 0.05, "");
+                                *target = target.max(0.0);
+                            }
                             Goal::CommonMode { mhz, target, weight } => {
                                 ui.label("Common-mode current at most");
                                 num(ui, target, 0.5, " %");
@@ -410,7 +435,7 @@ impl OptimiserView {
                                 *target = target.max(0.01);
                                 if !has_shield {
                                     ui.colored_label(ui.visuals().warn_fg_color, "⚠").on_hover_text(
-                                        "Model the coax shield first (Feedline view, Model the shield):                                          this goal measures the current on it",
+                                        "Model the coax shield first (Feedline view, Model the shield): this goal measures the current on it",
                                     );
                                 }
                             }
@@ -476,6 +501,35 @@ impl OptimiserView {
                             });
                             ui.close();
                         }
+                        ui.menu_button("Match a measurement", |ui| {
+                            if data.measurements.is_empty() {
+                                ui.label(
+                                    RichText::new("Import a VNA sweep first (File menu, or the Compare view).").weak(),
+                                );
+                            }
+                            for k in 0..data.measurements.len() {
+                                let name = data.measurements[k].name.clone();
+                                if ui
+                                    .button(&name)
+                                    .on_hover_text("Fit the model to this measurement within the sweep (21 points), with the variables ticked above")
+                                    .clicked()
+                                {
+                                    let points = crate::views::compare::antenna_points(data, settings, k);
+                                    let (a, b) = data
+                                        .sweep
+                                        .as_ref()
+                                        .map_or((0.0, f64::MAX), |s| (s.plan.start_mhz, s.plan.stop_mhz));
+                                    match Goal::fit_to(&name, &points, a, b, 21, settings.z0) {
+                                        Some(g) => self.goals.push(g),
+                                        None => data.message(
+                                            Level::Warning,
+                                            format!("{name} doesn't overlap the sweep: use Sweep this range in the Compare view first."),
+                                        ),
+                                    }
+                                    ui.close();
+                                }
+                            }
+                        });
                         if ui.button("Front-to-back or front-to-rear").clicked() {
                             self.goals.push(Goal::FrontToBack {
                                 mhz: data.mhz,

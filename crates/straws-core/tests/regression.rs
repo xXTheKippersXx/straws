@@ -2540,3 +2540,92 @@ fn element_networks_give_exact_currents_in_nec() {
         exact.junction
     );
 }
+
+/// Fitting the model to a measurement: a dipole "measured" at a known
+/// length and loss (the engine's own sweep), then a model that starts too
+/// short and lossless is fitted to it and finds both again.
+#[test]
+fn the_optimiser_fits_the_model_to_a_measurement() {
+    use straws_core::analysis::measured::MeasuredPoint;
+    use straws_core::optimise::{Goal, Method, Options, Param, Problem, optimise};
+    let deck = Deck::parse(
+        "CE\nSY len=5.0, rl=1\nGW 1 21 0 -len 0 0 len 0 0.001\nGE 0\nLD 0 1 11 11 rl 0 0\nEX 0 1 11 0 1\nFR 0 1 0 0 14.2\nEN\n",
+    );
+    let engine = engine().with_solver_threads(1);
+    let truth = deck
+        .expand_with(&[("len".into(), 5.18), ("rl".into(), 7.0)])
+        .unwrap();
+    let swept = engine
+        .run(
+            &straws_core::analysis::plan::run_deck(
+                &truth,
+                &straws_core::analysis::plan::FrequencyPlan {
+                    start_mhz: 13.5,
+                    stop_mhz: 14.5,
+                    points: 41,
+                },
+                None,
+            ),
+            &CancelToken::new(),
+        )
+        .unwrap();
+    let measured: Vec<MeasuredPoint> = swept
+        .frequencies
+        .iter()
+        .map(|f| MeasuredPoint {
+            mhz: f.mhz,
+            z: f.inputs[0].impedance,
+        })
+        .collect();
+    let goal = Goal::fit_to("the dipole", &measured, 13.0, 15.0, 11, 50.0).unwrap();
+    let Goal::Match {
+        start_mhz,
+        stop_mhz,
+        ..
+    } = goal
+    else {
+        unreachable!()
+    };
+    assert_eq!((start_mhz, stop_mhz), (13.5, 14.5));
+    let problem = Problem {
+        deck: deck.clone(),
+        fixed: vec![],
+        params: vec![
+            Param {
+                name: "len".into(),
+                min: 4.8,
+                max: 5.6,
+                start: 5.0,
+            },
+            Param {
+                name: "rl".into(),
+                min: 0.0,
+                max: 20.0,
+                start: 1.0,
+            },
+        ],
+        goals: vec![goal],
+        limits: Default::default(),
+    };
+    let start = problem.evaluate(&engine, &[5.0, 1.0], &CancelToken::new());
+    let exact = problem.evaluate(&engine, &[5.18, 7.0], &CancelToken::new());
+    let best = optimise(
+        &problem,
+        &engine,
+        Options::new(Method::NelderMead, 200),
+        &CancelToken::new(),
+        |_| {},
+    );
+    println!(
+        "RMS reflection difference {:.4} -> {:.5} (exact {:.6}); len {:.4}, rl {:.3}",
+        start.results[0].value,
+        best.results[0].value,
+        exact.results[0].value,
+        best.values[0],
+        best.values[1]
+    );
+    assert!(exact.results[0].value < 1e-3);
+    assert!(start.results[0].value > 0.2);
+    assert!((best.values[0] - 5.18).abs() < 0.005);
+    assert!((best.values[1] - 7.0).abs() < 0.5);
+}

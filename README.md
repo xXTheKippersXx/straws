@@ -56,8 +56,11 @@ through 30 m of RG-213, and the optimiser ready to tune the elements.*
 - **Optimiser**: change chosen variables within limits to meet goals (low SWR
   across one or more bands, at the feed point or at the radio through the
   feedline, gain in a direction or at the peak, front-to-back or front-to-rear,
-  low common-mode current on the coax), skipping designs that can't be built. A global search on every core then fine-tuning, or quick
-  fine-tuning alone; the best design so far shows in every view while it runs.
+  low common-mode current on the coax), skipping designs that can't be built. A
+  global search on every core then fine-tuning, or quick fine-tuning alone; the
+  best design so far shows in every view while it runs. It also fits the model
+  to a measured VNA sweep: tick what could differ in the real antenna (lengths,
+  height, ground, losses) and it finds the values that make the two agree.
 - **Matching and feeds**: L, pi and T networks and stubs with part values (or
   the nearest standard parts), drawn on a Smith chart; feedline loss and the
   SWR the radio sees through coax or ladder line and a balun or unun; and the
@@ -119,8 +122,7 @@ straws-cli bench benchmarks --engine-dir C:\4nec2\exe
 Run `straws-cli help` for everything else.
 
 ## Plans
-- Fit the model to a measured VNA sweep (the optimiser adjusts lengths, ground
-  and losses until the two agree); CAD import.
+- CAD import (DXF wire-frames first).
 - STEP export straight from the app (for now: STL, which FreeCAD turns into a
   solid and saves as STEP) and a native PDF report (for now: print the report
   page to PDF).

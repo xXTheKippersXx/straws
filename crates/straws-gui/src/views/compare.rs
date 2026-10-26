@@ -234,6 +234,22 @@ fn measurements(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
     }
 }
 
+/// Measurement `k`'s points as the antenna itself would show them (the
+/// feedline taken off when it was measured through it).
+pub fn antenna_points(data: &Data, settings: &Settings, k: usize) -> Vec<measured::MeasuredPoint> {
+    let Some(m) = data.measurements.get(k) else {
+        return Vec::new();
+    };
+    let feed = crate::views::feedline::current_feed(data, settings);
+    m.points
+        .iter()
+        .map(|p| measured::MeasuredPoint {
+            mhz: p.mhz,
+            z: at_antenna(m, &feed, p.mhz, p.z),
+        })
+        .collect()
+}
+
 /// A measured impedance as the antenna itself would show it.
 fn at_antenna(
     m: &crate::app::Measurement,
