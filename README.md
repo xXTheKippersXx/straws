@@ -24,7 +24,7 @@ through 30 m of RG-213, and the optimiser ready to tune the elements.*
 - **Everything in one window**, dark by default, with dockable views: 3D model,
   3D pattern, pattern cuts, SWR and impedance, Smith chart, feedline, feed
   system, matching, feeds, receive, checks, messages, wires, ground, deck,
-  templates, near field, variables, optimiser and compare. Drag tabs to
+  templates, near field, variables, optimiser, compare and notes. Drag tabs to
   rearrange; the layout is kept. Light theme and a text size setting (View
   menu, or Ctrl + / Ctrl -).
 - **Live frequency slider**: every view follows. A sweep with patterns runs in
@@ -89,6 +89,11 @@ through 30 m of RG-213, and the optimiser ready to tune the elements.*
   check (double the segments, see what moves), a tolerance check (random builds
   within your build accuracy) and a sensitivity map (which wire to trim, and
   which way).
+- **Projects**: a `.straws` file keeps the antenna together with everything
+  set up around it: notes, the feedline, the optimiser's variables and goals,
+  comparison snapshots and measured VNA sweeps. Its first part is the plain
+  `.nec` deck, and File > Export > NEC deck writes the antenna alone for 4nec2
+  or any NEC program; `.nec` files open and save as before.
 - **Undo and redo** for every change. **Exports**: CSV (sweep, pattern,
   currents), Touchstone `.s1p`, DXF and STL (wires as tubes) for CAD, a report
   page and a build sheet (cut list, stock to buy, element positions; print to

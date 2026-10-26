@@ -121,7 +121,7 @@ impl Compute {
         self.rx.try_iter().collect()
     }
 
-    fn engine(&self) -> Result<Engine, String> {
+    pub fn engine(&self) -> Result<Engine, String> {
         self.engine.clone()
     }
 

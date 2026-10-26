@@ -53,13 +53,15 @@ pub enum Tab {
     Receive,
     /// The feed system (balun, cable, matching network) tuned over a band.
     FeedSystem,
+    /// Notes kept with the design.
+    Notes,
     /// No longer a view (curves are drawn and edited in the 3D model view);
     /// kept so layouts saved with it still load, and removed from them.
     Curves,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 20] = [
+    pub const ALL: [Tab; 21] = [
         Tab::Model,
         Tab::Pattern,
         Tab::Cuts,
@@ -80,6 +82,7 @@ impl Tab {
         Tab::Feeds,
         Tab::Receive,
         Tab::FeedSystem,
+        Tab::Notes,
     ];
 
     pub fn title(self) -> &'static str {
@@ -104,6 +107,7 @@ impl Tab {
             Tab::Feeds => "Feeds",
             Tab::Receive => "Receive",
             Tab::FeedSystem => "Feed system",
+            Tab::Notes => "Notes",
             Tab::Curves => "Curves",
         }
     }
@@ -269,6 +273,8 @@ pub struct Data {
     pub snapshot_count: usize,
     /// Measured sweeps to compare with (kept across files).
     pub measurements: Vec<Measurement>,
+    /// Notes kept with the design (in its project file).
+    pub notes: String,
     /// A new model (name, deck text) a view wants opened, e.g. a template.
     pub new_deck: Option<(String, String)>,
     /// Something a view asked the app to do.
@@ -430,6 +436,9 @@ pub struct App {
     editing_bands: bool,
     /// A CAD drawing being imported (its dialog is open).
     cad_import: Option<crate::views::cadimport::CadImport>,
+    /// A project's snapshots being swept again: name, deck text, and the
+    /// sweep when it's done (`None` if it couldn't be run).
+    snapshot_jobs: Vec<(String, String, Receiver<Option<SweepResults>>)>,
     /// The zoom last applied, to notice Ctrl + / Ctrl - changing it.
     applied_zoom: f32,
     /// The view a requested screenshot is cropped to (None: whole window).
@@ -518,6 +527,7 @@ fn default_dock() -> DockState<Tab> {
             Tab::Receive,
             Tab::Optimiser,
             Tab::Compare,
+            Tab::Notes,
         ],
     );
     dock
@@ -537,11 +547,18 @@ impl App {
             .and_then(|s| eframe::get_value(s, DOCK_KEY))
             .unwrap_or_else(default_dock);
         // A saved layout from an older version lacks the newer views: add
-        // them to the first panel, keeping the rest of the layout.
+        // them to the first panel, keeping the rest of the layout and the
+        // panel's own view in front.
+        let in_front = dock.main_surface_mut().find_active().map(|(_, t)| *t);
+        let mut added = false;
         for tab in Tab::ALL {
             if dock.find_tab(&tab).is_none() {
                 dock.push_to_first_leaf(tab);
+                added = true;
             }
+        }
+        if added && let Some(path) = in_front.and_then(|t| dock.find_tab(&t)) {
+            let _ = dock.set_active_tab(path);
         }
         // Views that no longer exist.
         while let Some(at) = dock.find_tab(&Tab::Curves) {
@@ -569,6 +586,7 @@ impl App {
             help: None,
             editing_bands: false,
             cad_import: None,
+            snapshot_jobs: Vec::new(),
             applied_zoom: 1.0,
             crop: None,
             last_title: String::new(),
@@ -599,7 +617,24 @@ impl App {
     fn open(&mut self, path: &Path) {
         // Remember full paths, so "Open recent" works from anywhere.
         let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let model = match LoadedModel::load(path) {
+        let project = crate::project::is_project(path);
+        let loaded = if project {
+            std::fs::read(path).map(|bytes| {
+                let text = String::from_utf8_lossy(&bytes).into_owned();
+                let (deck, extras) = crate::project::split(&text);
+                let name = path.file_name().map_or_else(
+                    || "project".to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                (
+                    LoadedModel::from_deck(Some(path.to_path_buf()), name, Deck::parse(&deck)),
+                    extras,
+                )
+            })
+        } else {
+            LoadedModel::load(path).map(|m| (m, None))
+        };
+        let (model, extras) = match loaded {
             Ok(m) => m,
             Err(e) => {
                 self.data.message(
@@ -613,8 +648,192 @@ impl App {
         self.settings.recent.insert(0, path.to_path_buf());
         self.settings.recent.truncate(10);
         self.install(model);
+        match extras {
+            Some(Ok(e)) => self.apply_extras(&e),
+            Some(Err(e)) => self.data.message(
+                Level::Warning,
+                format!(
+                    "The antenna opened, but the project's other settings (notes, optimiser, \
+                     snapshots, measurements, feedline) couldn't be read: {e}"
+                ),
+            ),
+            None => {}
+        }
+        if project {
+            let baseline = self.extras().comparable();
+            if let Some(m) = &mut self.data.model {
+                m.saved_extras = Some(baseline);
+            }
+        }
         self.data
             .message(Level::Info, format!("Opened {}", path.display()));
+    }
+
+    /// What a project file keeps besides the deck, as things are now.
+    fn extras(&self) -> crate::project::Extras {
+        use crate::project::{Extras, FeedSave, MeasurementSave, SnapshotSave, rgb};
+        Extras {
+            version: 0,
+            notes: self.data.notes.clone(),
+            mhz: self.data.mhz,
+            z0: self.settings.z0,
+            feed: FeedSave::from_settings(&self.settings),
+            optimiser: self.views.optimiser.save(),
+            snapshots: self
+                .data
+                .comparisons
+                .iter()
+                .map(|c| SnapshotSave {
+                    name: c.name.clone(),
+                    colour: rgb(c.colour),
+                    visible: c.visible,
+                    start_mhz: c.sweep.plan.start_mhz,
+                    stop_mhz: c.sweep.plan.stop_mhz,
+                    points: c.sweep.plan.points,
+                    deck: c.deck.clone(),
+                })
+                .collect(),
+            measurements: self
+                .data
+                .measurements
+                .iter()
+                .map(|m| MeasurementSave {
+                    name: m.name.clone(),
+                    colour: rgb(m.colour),
+                    visible: m.visible,
+                    through_feedline: m.through_feed,
+                    points: m.points.iter().map(|p| (p.mhz, p.z.re, p.z.im)).collect(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Puts a project's other settings in place (after its deck is open).
+    fn apply_extras(&mut self, e: &crate::project::Extras) {
+        use crate::project::colour;
+        self.data.notes = e.notes.clone();
+        if e.z0.is_finite() && e.z0 > 0.0 {
+            self.settings.z0 = e.z0;
+        }
+        e.feed.apply(&mut self.settings);
+        self.views.optimiser.restore(&e.optimiser);
+        self.data.measurements = e
+            .measurements
+            .iter()
+            .filter(|m| !m.points.is_empty())
+            .map(|m| Measurement {
+                name: m.name.clone(),
+                colour: colour(m.colour),
+                visible: m.visible,
+                points: m
+                    .points
+                    .iter()
+                    .map(
+                        |&(mhz, r, x)| straws_core::analysis::measured::MeasuredPoint {
+                            mhz,
+                            z: straws_core::Complex64::new(r, x),
+                        },
+                    )
+                    .collect(),
+                through_feed: m.through_feedline,
+            })
+            .collect();
+        // The snapshots' results aren't stored: they're swept again.
+        self.data.comparisons.clear();
+        self.snapshot_jobs.clear();
+        for s in &e.snapshots {
+            let plan = FrequencyPlan {
+                start_mhz: s.start_mhz,
+                stop_mhz: s.stop_mhz.max(s.start_mhz),
+                points: s.points.max(1),
+            };
+            self.data.comparisons.push(Comparison {
+                name: s.name.clone(),
+                colour: colour(s.colour),
+                visible: s.visible,
+                sweep: SweepResults::new(plan),
+                deck: s.deck.clone(),
+            });
+            if let Some(rx) = self.sweep_snapshot(&s.deck, plan) {
+                self.snapshot_jobs
+                    .push((s.name.clone(), s.deck.clone(), rx));
+            }
+        }
+        self.data.snapshot_count = self.data.comparisons.len();
+        if e.mhz.is_finite() && e.mhz > 0.0 {
+            self.set_frequency(e.mhz);
+        }
+    }
+
+    /// Sweeps a snapshot's design in the background.
+    fn sweep_snapshot(
+        &self,
+        deck: &str,
+        plan: FrequencyPlan,
+    ) -> Option<Receiver<Option<SweepResults>>> {
+        let numeric = Deck::parse(deck).expand().ok()?;
+        let engine = self.compute.engine().ok()?;
+        let ctx = self.compute.ctx();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let run = straws_core::analysis::plan::run_deck(
+                &numeric,
+                &plan,
+                Some(straws_core::analysis::plan::PatternRequest::new(
+                    SWEEP_PATTERN_STEP,
+                )),
+            );
+            let mut results = SweepResults::new(plan);
+            let ok = engine
+                .sweep(
+                    &run,
+                    straws_core::engine::SweepOptions::default(),
+                    &straws_core::engine::CancelToken::new(),
+                    |index, r| {
+                        results.insert(
+                            index,
+                            FreqPoint::from_result(r, Some(SWEEP_PATTERN_STEP))
+                                .without_helpers(&numeric),
+                        );
+                    },
+                )
+                .is_ok();
+            let _ = tx.send(ok.then_some(results));
+            ctx.request_repaint();
+        });
+        Some(rx)
+    }
+
+    /// Puts finished snapshot sweeps in place.
+    fn poll_snapshot_jobs(&mut self) {
+        let mut k = 0;
+        while k < self.snapshot_jobs.len() {
+            match self.snapshot_jobs[k].2.try_recv() {
+                Ok(result) => {
+                    let (name, deck, _) = self.snapshot_jobs.remove(k);
+                    match result {
+                        Some(sweep) => {
+                            if let Some(c) = self
+                                .data
+                                .comparisons
+                                .iter_mut()
+                                .find(|c| c.name == name && c.deck == deck)
+                            {
+                                c.sweep = sweep;
+                            }
+                        }
+                        None => self.data.message(
+                            Level::Warning,
+                            format!("The snapshot \"{name}\" couldn't be swept again."),
+                        ),
+                    }
+                }
+                Err(TryRecvError::Empty) => k += 1,
+                Err(TryRecvError::Disconnected) => {
+                    self.snapshot_jobs.remove(k);
+                }
+            }
+        }
     }
 
     /// File > New: an empty model to draw in.
@@ -1060,10 +1279,13 @@ impl App {
 
     /// Whether the model differs from the file it came from.
     fn changed(&self) -> bool {
-        self.data
-            .model
-            .as_ref()
-            .is_some_and(|m| !self.data.overrides.is_empty() || m.deck.to_text() != m.saved_text)
+        self.data.model.as_ref().is_some_and(|m| {
+            !self.data.overrides.is_empty()
+                || m.deck.to_text() != m.saved_text
+                || m.saved_extras
+                    .as_ref()
+                    .is_some_and(|e| *e != self.extras().comparable())
+        })
     }
 
     /// Writes the deck (with the Variables values written into its SY
@@ -1091,9 +1313,26 @@ impl App {
                 if self.dialog.is_some() {
                     return;
                 }
+                // New models and projects save as projects, decks as decks;
+                // either can be chosen.
+                let as_deck = model
+                    .path
+                    .as_deref()
+                    .is_some_and(|p| !crate::project::is_project(p));
+                let stem = Path::new(&model.name)
+                    .file_stem()
+                    .map_or_else(|| model.name.clone(), |s| s.to_string_lossy().into_owned());
+                let project = ("STRAWS projects (everything)", ["straws", "STRAWS"]);
+                let deck = ("NEC decks (the antenna only)", ["nec", "NEC"]);
+                let (first, second) = if as_deck {
+                    (deck, project)
+                } else {
+                    (project, deck)
+                };
                 let mut dialog = rfd::FileDialog::new()
-                    .add_filter("NEC decks", &["nec", "NEC"])
-                    .set_file_name(format!("{}.nec", model.name.trim_end_matches(".nec")));
+                    .add_filter(first.0, &first.1)
+                    .add_filter(second.0, &second.1)
+                    .set_file_name(format!("{stem}.{}", first.1[0]));
                 if let Some(dir) = model
                     .path
                     .as_ref()
@@ -1146,6 +1385,11 @@ impl App {
                     .message(Level::Error, format!("Couldn't save {}: {e}", p.display())),
             },
             (DialogKind::Save(then), Some(p)) => {
+                let p = if p.extension().is_none() {
+                    p.with_extension(crate::project::EXTENSION)
+                } else {
+                    p
+                };
                 if self.write_deck(&p)
                     && let Some(t) = then
                 {
@@ -1233,35 +1477,29 @@ impl App {
     /// Writes the deck to `path`. Returns whether it worked.
     fn write_deck(&mut self, path: &Path) -> bool {
         let path = path.to_path_buf();
-        let Some(model) = &self.data.model else {
+        let Some((deck, sweep_written)) = self.deck_to_save() else {
             return false;
         };
-        let mut deck = model.deck.clone();
-        for (name, value) in &self.data.overrides {
-            deck.set_variable(name, *value);
-        }
-        // The toolbar's sweep goes into the FR card, so the file reopens
-        // (here and in 4nec2) on the same frequencies.
-        let sweep_written = straws_core::analysis::plan::write_sweep(&mut deck, &self.plan_edit);
-        // 4nec2 can't model radials on or under the ground: give it NEC's
-        // own (rough) radial screen in their place.
-        let stand_in = model.numeric.as_ref().ok().and_then(|n| {
-            straws_core::deck::radials::radial_numbers(&model.deck, n)
-                .into_iter()
-                .find(|r| r.buried)
-                .map(|r| straws_core::deck::ground::RadialScreen {
-                    count: r.count as i64,
-                    length: r.length,
-                    wire_radius: r.wire_radius,
-                })
-        });
-        deck.set_stand_in_screen(stand_in);
-        let text = deck.to_text();
+        let deck_text = deck.to_text();
+        // A project keeps everything else after the deck.
+        let extras = crate::project::is_project(&path).then(|| self.extras());
+        let text = match &extras {
+            Some(e) => match crate::project::join(&deck_text, e) {
+                Ok(t) => t,
+                Err(e) => {
+                    self.data
+                        .message(Level::Error, format!("Couldn't write the project: {e}"));
+                    return false;
+                }
+            },
+            None => deck_text.clone(),
+        };
         match std::fs::write(&path, &text) {
             Ok(()) => {
                 if let Some(m) = &mut self.data.model {
                     m.deck = deck;
-                    m.saved_text = text;
+                    m.saved_text = deck_text;
+                    m.saved_extras = extras.map(|e| e.comparable());
                     m.name = path
                         .file_name()
                         .map_or_else(|| "deck".into(), |n| n.to_string_lossy().into_owned());
@@ -1334,6 +1572,34 @@ impl App {
     }
 
     /// File > Export.
+    /// The deck as saving writes it: the Variables values in its SY lines,
+    /// the toolbar's sweep in its FR card (and whether that changed it),
+    /// and a stand-in for radials on or under the ground.
+    fn deck_to_save(&self) -> Option<(Deck, bool)> {
+        let model = self.data.model.as_ref()?;
+        let mut deck = model.deck.clone();
+        for (name, value) in &self.data.overrides {
+            deck.set_variable(name, *value);
+        }
+        // The toolbar's sweep goes into the FR card, so the file reopens
+        // (here and in 4nec2) on the same frequencies.
+        let sweep_written = straws_core::analysis::plan::write_sweep(&mut deck, &self.plan_edit);
+        // 4nec2 can't model radials on or under the ground: give it NEC's
+        // own (rough) radial screen in their place.
+        let stand_in = model.numeric.as_ref().ok().and_then(|n| {
+            straws_core::deck::radials::radial_numbers(&model.deck, n)
+                .into_iter()
+                .find(|r| r.buried)
+                .map(|r| straws_core::deck::ground::RadialScreen {
+                    count: r.count as i64,
+                    length: r.length,
+                    wire_radius: r.wire_radius,
+                })
+        });
+        deck.set_stand_in_screen(stand_in);
+        Some((deck, sweep_written))
+    }
+
     fn export_menu(&mut self, ui: &mut egui::Ui) {
         use straws_core::export;
         let stem = self.stem();
@@ -1341,6 +1607,26 @@ impl App {
         let sweep = self.data.display_sweep().cloned();
         let point = self.data.shown_point().cloned();
         let has_sweep = sweep.as_ref().is_some_and(|s| s.done() > 0);
+        if ui
+            .add_enabled(
+                self.data.model.is_some(),
+                egui::Button::new("NEC deck (.nec)…"),
+            )
+            .on_hover_text(
+                "The antenna alone as a .nec deck, for 4nec2 or any NEC program (the open file \
+                 stays as it is)",
+            )
+            .clicked()
+            && let Some((deck, _)) = self.deck_to_save()
+        {
+            ui.close();
+            self.export(
+                deck.to_text().into_bytes(),
+                &format!("{stem}.nec"),
+                "NEC decks",
+                "nec",
+            );
+        }
         if ui
             .add_enabled(has_sweep, egui::Button::new("SWR and impedance (CSV)…"))
             .on_hover_text(
@@ -1824,7 +2110,10 @@ impl App {
         if self.dialog.is_some() {
             return;
         }
-        let mut dialog = rfd::FileDialog::new().add_filter("NEC decks", &["nec", "NEC"]);
+        let mut dialog = rfd::FileDialog::new().add_filter(
+            "STRAWS projects and NEC decks",
+            &["straws", "STRAWS", "nec", "NEC"],
+        );
         if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
@@ -2366,6 +2655,7 @@ impl eframe::App for App {
             self.confirm = Some(Leave::Quit);
         }
         self.poll_dialog();
+        self.poll_snapshot_jobs();
         self.take_screenshot(&ctx);
         self.confirm_ui(&ctx);
         self.help_ui(&ctx);

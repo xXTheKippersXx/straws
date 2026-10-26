@@ -8,6 +8,7 @@ mod colormap;
 mod compute;
 mod icon;
 mod model;
+mod project;
 mod render3d;
 mod scene;
 mod views;

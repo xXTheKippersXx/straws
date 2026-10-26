@@ -22,6 +22,8 @@ bytemuck = { version = "1", features = ["derive"] }
 glam = { version = "0.34", features = ["bytemuck"] }
 # Already built as part of eframe; used directly to save screenshots.
 png = "0.18"
+# Already built as part of eframe (its settings file); used for project files.
+ron = "0.12"
 
 [lints]
 workspace = true

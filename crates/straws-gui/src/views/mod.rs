@@ -14,6 +14,7 @@ mod ground;
 mod matching;
 mod nearfield;
 pub mod newvar;
+mod notes;
 mod optimiser;
 pub mod patches;
 pub mod plates;
@@ -107,6 +108,7 @@ impl egui_dock::TabViewer for TabView<'_> {
             Tab::Ground => ground::ui(ui, self.data, self.settings),
             Tab::Smith => smith::ui(ui, self.data, self.settings),
             Tab::Compare => self.views.compare.ui(ui, self.data, self.settings),
+            Tab::Notes => notes::ui(ui, self.data),
             Tab::Optimiser => self.views.optimiser.ui(ui, self.data, self.settings),
             Tab::Matching => self.views.matching.ui(ui, self.data, self.settings),
             Tab::Templates => self.views.templates.ui(ui, self.data),

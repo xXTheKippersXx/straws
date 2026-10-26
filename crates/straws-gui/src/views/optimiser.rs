@@ -122,6 +122,57 @@ type Range = (f64, f64);
 
 impl OptimiserView {
     /// Clears a finished run's results (e.g. when another file opens).
+    /// The set-up, for a project file.
+    pub fn save(&self) -> crate::project::OptimiserSave {
+        use crate::project::{GoalSave, OptimiserSave, VarSave};
+        OptimiserSave {
+            vars: self
+                .vars
+                .iter()
+                .map(|v| VarSave {
+                    name: v.name.clone(),
+                    vary: v.vary,
+                    min: v.min,
+                    max: v.max,
+                })
+                .collect(),
+            goals: self.goals.iter().map(GoalSave::from_goal).collect(),
+            whole_range: self.method == Method::DifferentialEvolution,
+            max_designs: self.max_evaluations,
+            stop_when_met: self.stop_when_met,
+            skip_unbuildable: self.avoid_clashes,
+            size: self.size,
+        }
+    }
+
+    /// Takes the set-up from a project file (variables the deck doesn't
+    /// have are dropped when the view next draws).
+    pub fn restore(&mut self, s: &crate::project::OptimiserSave) {
+        self.forget_results();
+        self.vars = s
+            .vars
+            .iter()
+            .map(|v| VarSetting {
+                name: v.name.clone(),
+                vary: v.vary,
+                min: v.min,
+                max: v.max,
+            })
+            .collect();
+        self.goals = s.goals.iter().map(|g| g.to_goal()).collect();
+        self.method = if s.whole_range {
+            Method::DifferentialEvolution
+        } else {
+            Method::NelderMead
+        };
+        if s.max_designs > 0 {
+            self.max_evaluations = s.max_designs;
+        }
+        self.stop_when_met = s.stop_when_met;
+        self.avoid_clashes = s.skip_unbuildable;
+        self.size = s.size;
+    }
+
     pub fn forget_results(&mut self) {
         if let Some(r) = &self.run {
             r.cancel.cancel();

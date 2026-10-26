@@ -31,6 +31,9 @@ pub struct LoadedModel {
     pub wires: Vec<Wire>,
     /// The deck text as last saved or opened, to tell if it has changed.
     pub saved_text: String,
+    /// For a project file: what it held besides the deck when it was
+    /// opened or last saved (as `Extras::comparable` gives it).
+    pub saved_extras: Option<crate::project::Extras>,
     /// Bumped whenever `segments` is replaced, so views redraw.
     pub geometry_version: u64,
     /// Why the engine couldn't lay out the last geometry, if it couldn't.
@@ -99,11 +102,12 @@ impl LoadedModel {
         LoadedModel::from_deck(None, "Untitled".into(), Deck::parse(BLANK_DECK))
     }
 
-    fn from_deck(path: Option<PathBuf>, name: String, deck: Deck) -> LoadedModel {
+    pub fn from_deck(path: Option<PathBuf>, name: String, deck: Deck) -> LoadedModel {
         let mut m = LoadedModel {
             path,
             name,
             saved_text: deck.to_text(),
+            saved_extras: None,
             deck,
             numeric: Err(DeckError::general("not read yet")),
             segments: Vec::new(),

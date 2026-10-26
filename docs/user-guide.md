@@ -438,7 +438,19 @@ joined wire ends too* in the prompt if you don't want that).
   about 10% is worth a choke.
 
 ## Saving and exporting
-- Ctrl+S saves the deck with the slider values written into its `SY` lines.
+- Ctrl+S saves, with the slider values written into the deck's `SY` lines.
+  A new model saves as a **project** (`.straws`), which keeps everything set
+  up around the antenna: the notes (Notes view), the Feedline settings
+  (cable, connectors, balun, choke), the optimiser's variables, limits and
+  goals, the comparison snapshots (swept again when the project opens) and
+  measured VNA sweeps. A project opens exactly as you left it, and the title
+  shows "(changed)" when any of that has changed since it was saved.
+- A `.nec` deck you open saves as a `.nec` deck, holding the antenna only.
+  File > Save as offers both kinds: choose a project to keep the rest too.
+- A project file starts with the plain NEC deck, readable in any text
+  editor; the rest follows a `'straws project` line, where NEC stops reading.
+  File > Export > **NEC deck** writes the antenna alone as a `.nec` file for
+  4nec2 or any other NEC program, leaving the open file as it is.
 - File > Export: CSV of the sweep, the pattern or the currents (for
   spreadsheets, Octave or MATLAB), Touchstone `.s1p`, DXF of the wires or STL
   of them as solid tubes for CAD (in FreeCAD, Part > Create shape from mesh
