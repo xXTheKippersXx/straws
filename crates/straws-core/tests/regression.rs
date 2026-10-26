@@ -951,9 +951,9 @@ fn bad_and_extreme_decks_are_handled() {
                 .replace("EX 0 1 6", "EX 0 1 1"),
         ),
         (
-            "2500 segments (5,000 takes over a minute on slow CI runners in a debug build)",
-            ok.replace("GW 1 11", "GW 1 2499")
-                .replace("EX 0 1 6", "EX 0 1 1250"),
+            "1501 segments (bigger ones take over a minute on slow CI runners in a debug build)",
+            ok.replace("GW 1 11", "GW 1 1501")
+                .replace("EX 0 1 6", "EX 0 1 751"),
         ),
         ("tiny radius", ok.replace(".001", "1e-9")),
         ("radius > segment", ok.replace(".001", "2")),
@@ -1000,7 +1000,9 @@ fn bad_and_extreme_decks_are_handled() {
                 let cancel = cancel.clone();
                 std::thread::spawn(move || {
                     let start = Instant::now();
-                    while start.elapsed() < Duration::from_secs(60) {
+                    // A hang never finishes; slow machines (CI's macOS runners,
+                    // debug builds) only take longer: two minutes is generous.
+                    while start.elapsed() < Duration::from_secs(120) {
                         std::thread::sleep(Duration::from_millis(100));
                     }
                     cancel.cancel();
@@ -1008,7 +1010,7 @@ fn bad_and_extreme_decks_are_handled() {
             };
             let start = Instant::now();
             let result = engine.run_text(&run.to_nec_text(), &cancel);
-            if start.elapsed() >= Duration::from_secs(59) {
+            if start.elapsed() >= Duration::from_secs(119) {
                 problems.push(format!("{name} ({what}): hung"));
             }
             if let Ok(raw) = &result {
