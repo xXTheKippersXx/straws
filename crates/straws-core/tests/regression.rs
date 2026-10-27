@@ -2629,3 +2629,83 @@ fn the_optimiser_fits_the_model_to_a_measurement() {
     assert!((best.values[0] - 5.18).abs() < 0.005);
     assert!((best.values[1] - 7.0).abs() < 0.5);
 }
+
+/// STEP export: each set of joined wires is its own body (the driven
+/// halves together, the reflector and director apart), every tube reads
+/// back exactly where the deck puts it, and a plate goes out as a solid
+/// sheet of its own.
+#[test]
+fn step_export_keeps_parts_apart_and_in_place() {
+    use straws_core::analysis::build::build_sheet;
+    use straws_core::deck::plates::{PlateKind, PlateSpec, plate_sets};
+    use straws_core::step;
+    let text = "CE\n\
+        GW 1 21 -2 -5.3 10 -2 5.3 10 .006 ' Reflector\n\
+        GW 2 10 0 -5 10 0 0 10 .006 ' Driven left\n\
+        GW 3 10 0 0 10 0 5 10 .006 ' Driven right\n\
+        GW 4 21 1.8 -4.8 10 1.8 4.8 10 .006 ' Director\n\
+        GE 0\nEX 0 2 10 0 1\nFR 0 1 0 0 14.2\nEN\n";
+    let mut deck = Deck::parse(text);
+    deck.add_plate(
+        &PlateSpec {
+            name: "screen".into(),
+            kind: PlateKind::Flat,
+            centre: [-6.0, 0.0, 10.0],
+            width: 12.0,
+            height: 8.0,
+            facing: 0.0,
+            angle: 0.0,
+            cells: [6, 4],
+            segments: 1,
+            wire_radius: 0.002,
+        },
+        5,
+    )
+    .unwrap();
+    let n = deck.expand().unwrap();
+    let parsed = engine().run(&n, &CancelToken::new()).unwrap();
+    let plate = &plate_sets(&deck)[0];
+    let sheet = build_sheet(&parsed.segments, &deck, &n, &plate.tags);
+    let mut bodies = step::bodies(&sheet, &parsed.segments);
+    let names: Vec<&str> = bodies.iter().map(|b| b.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Reflector", "part 2: Driven left, Driven right", "Director"]
+    );
+    let wires = straws_core::deck::edit::wires(&deck, &n);
+    let mesh = step::Mesh {
+        name: "screen".into(),
+        wires: wires
+            .iter()
+            .filter(|w| plate.tags.contains(&w.tag))
+            .map(|w| (w.a, w.b))
+            .collect(),
+        thickness: 0.003,
+        radius: 0.002,
+    };
+    let slab = step::sheet_solid(&mesh).unwrap();
+    assert_eq!(slab.faces.len(), 6);
+    assert!(slab.loose.is_empty());
+    bodies.push(step::Body {
+        name: "screen".into(),
+        rods: Vec::new(),
+        sheets: vec![mesh],
+    });
+    let file = step::write(&bodies, "yagi");
+    std::fs::write(std::env::temp_dir().join("straws-yagi.step"), &file).unwrap();
+    assert_eq!(file.matches("NEXT_ASSEMBLY_USAGE_OCCURRENCE").count(), 4);
+    let read = step::read_step(&file).unwrap();
+    assert_eq!(read.metres_per_unit, Some(0.001));
+    let tubes = &read.parts.tubes;
+    assert_eq!(tubes.len(), 4, "{tubes:?}");
+    for w in wires.iter().filter(|w| w.tag <= 4) {
+        let (a, b) = (w.a.map(|v| v * 1000.0), w.b.map(|v| v * 1000.0));
+        let near = |p: [f64; 3], q: [f64; 3]| (0..3).all(|i| (p[i] - q[i]).abs() < 1e-6);
+        assert!(
+            tubes.iter().any(|t| (t.radius - 6.0).abs() < 1e-9
+                && ((near(t.a, a) && near(t.b, b)) || (near(t.a, b) && near(t.b, a)))),
+            "tag {}",
+            w.tag
+        );
+    }
+}

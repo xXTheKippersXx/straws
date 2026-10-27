@@ -22,6 +22,7 @@ pub mod radials;
 mod receive;
 pub mod reflectors;
 pub mod smith;
+pub mod stepexport;
 mod swr;
 mod templates;
 mod text;

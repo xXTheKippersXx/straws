@@ -16,7 +16,7 @@ With nothing open, the 3D model view offers three ways in:
   *Top* choose the plane you draw on. Then select the wire to feed and click
   *Feed this wire* in the Wires view.
 - **Open a deck**: any `.nec` file, including 4nec2's.
-- **Import a drawing**: File > Import from CAD (DXF, STL), or drop a `.dxf`
+- **Import a drawing**: File > Import from CAD (DXF, STEP, STL), or drop a `.dxf`
   file on the window. Lines, polylines (with their arcs), arcs, circles,
   ellipses and splines become wires; curves are cut into straight pieces
   (10° each unless you choose otherwise). Check the units (the file usually
@@ -27,9 +27,13 @@ With nothing open, the 3D model view offers three ways in:
   Each wire is named after its layer. Text, dimensions, hatches and block
   references are left out: explode blocks in your CAD program first. The
   wires go into a new model or the open one; then feed one to run it.
-- **Import a solid model** (STL, as most CAD programs and 3D-printing tools
-  save): each straight round tube becomes a wire along its middle with the
-  tube's own diameter (or one you choose). STL files don't say their units:
+- **Import a solid model** (STEP, or STL as most CAD programs and
+  3D-printing tools save): each straight round tube becomes a wire along its
+  middle with the tube's own diameter (or one you choose). STEP files say
+  their units and keep exact sizes; assemblies are followed, so a part used
+  several times gives a wire each time, each in its place. A pipe's inside
+  wall is left out, and a tube that meets another (a T) ends on the other's
+  middle, where the wires join. STL files don't say their units:
   millimetres is assumed, and the overall size shown tells you if that's
   wrong. Each tube is listed with its length and diameter; untick a boom or
   mast you don't want as a wire. Flat pieces (tube ends, plates, the faces of
@@ -453,11 +457,22 @@ joined wire ends too* in the prompt if you don't want that).
   4nec2 or any other NEC program, leaving the open file as it is.
 - File > Export: CSV of the sweep, the pattern or the currents (for
   spreadsheets, Octave or MATLAB), Touchstone `.s1p`, DXF of the wires or STL
-  of them as solid tubes for CAD (in FreeCAD, Part > Create shape from mesh
-  turns the STL into a solid you can save as STEP), a report page (open it in
+  of them as solid tubes for 3D printing, a STEP solid model for CAD (see
+  below), a report page (open it in
   a browser and print to PDF), SVG images of the SWR plot, Smith chart or
   pattern cuts (for documents and slides), or a PNG screenshot of the whole
   window or of any one view on screen.
+- File > Export > **Solid model (STEP)** writes the antenna for CAD programs
+  (FreeCAD, Fusion, SolidWorks, Onshape and others) in millimetres, exactly
+  where it is in the model. Every wire is a solid tube at its real diameter
+  (hollow if its material is a tube with a wall), and wires joined to each
+  other are one body: a biquad's element and its reflector arrive as two
+  separate, named objects. Plates, corner reflectors, dishes, curved
+  reflectors and grids can go out as solid sheets instead of wire meshes:
+  tick them in the export window and choose the thickness (the mesh's wire
+  diameter, or your own). A sheet is centred on its wires, flat parts are
+  flat faces, and any wires sticking out past the mesh's last whole cell stay
+  tubes. Only those meshes can be sheets; other wires are always tubes.
 - File > Export > **Build sheet**: a page to take to the workbench (print it
   to PDF): a cut list (identical pieces grouped, lengths in your length unit,
   curves measured along the curve), the stock to buy (total length of each

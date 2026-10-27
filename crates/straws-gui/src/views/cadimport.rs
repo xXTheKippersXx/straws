@@ -1,9 +1,9 @@
-//! Importing a wire-frame drawing (DXF) or a solid model's tubes (STL):
-//! the choices before the wires go in.
+//! Importing a wire-frame drawing (DXF) or a solid model's tubes (STEP or
+//! STL): the choices before the wires go in.
 
 use eframe::egui::{self, RichText};
 use straws_core::dxf::{self, Drawing, DrawnWire, WireOptions};
-use straws_core::stl;
+use straws_core::{step, stl};
 
 /// Units a drawing may be in: name and metres per unit.
 const UNITS: [(&str, f64); 6] = [
@@ -20,7 +20,7 @@ pub struct CadImport {
     pub file: String,
     text: String,
     drawing: Drawing,
-    /// A solid model's parts (STL), instead of a drawing.
+    /// A solid model's parts (STEP or STL), instead of a drawing.
     solid: Option<stl::Parts>,
     /// Each tube keeps its own diameter (solid models).
     own_diameter: bool,
@@ -61,23 +61,45 @@ pub enum Outcome {
 impl CadImport {
     pub fn new(file: String, bytes: &[u8], mhz: f64, has_model: bool) -> Result<CadImport, String> {
         let step_deg = 10.0;
-        if file.to_ascii_lowercase().ends_with(".stl") {
-            let parts = stl::tubes(&stl::read_stl(bytes)?);
+        let lower = file.to_ascii_lowercase();
+        let is_step = lower.ends_with(".step") || lower.ends_with(".stp");
+        if is_step || lower.ends_with(".stl") {
+            let (mut parts, mut unit) = if is_step {
+                let read = step::read_step(&String::from_utf8_lossy(bytes))?;
+                (read.parts, read.metres_per_unit)
+            } else {
+                (stl::tubes(&stl::read_stl(bytes)?), None)
+            };
             if parts.tubes.is_empty() {
                 return Err(format!(
                     "no straight round tubes in it ({} flat pieces, {} other shapes)",
                     parts.flat, parts.other
                 ));
             }
+            // A unit not on the list (kilometres, mils): the tubes in metres.
+            if let Some(m) = unit
+                && !UNITS.iter().any(|u| (u.1 - m).abs() < 1e-12)
+            {
+                for t in &mut parts.tubes {
+                    t.a = t.a.map(|v| v * m);
+                    t.b = t.b.map(|v| v * m);
+                    t.radius *= m;
+                }
+                unit = Some(1.0);
+            }
             let count = parts.tubes.len();
+            let units = unit
+                .and_then(|m| UNITS.iter().position(|u| (u.1 - m).abs() < 1e-12))
+                // STL files don't say; CAD programs mostly use millimetres.
+                .unwrap_or(2);
             return Ok(CadImport {
                 file,
                 text: String::new(),
                 drawing: Drawing::default(),
                 solid: Some(parts),
                 own_diameter: true,
-                units: 2, // STL files don't say; CAD programs mostly use millimetres
-                units_from_file: false,
+                units,
+                units_from_file: unit.is_some(),
                 // One entry a tube (the count is its index), all ticked.
                 layers: (0..count)
                     .map(|k| (format!("tube {}", k + 1), k, true))
@@ -220,8 +242,6 @@ impl CadImport {
                         ui.label(
                             RichText::new(if self.units_from_file {
                                 "(as the file says)"
-                            } else if solid {
-                                "(STL files don't say: check the size below)"
                             } else {
                                 "(the file doesn't say: check the size below)"
                             })

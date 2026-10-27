@@ -315,8 +315,11 @@ pub enum Request {
 
 /// Whether a file is a measured sweep (Touchstone) rather than a deck.
 fn is_drawing_file(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("dxf") || e.eq_ignore_ascii_case("stl"))
+    path.extension().is_some_and(|e| {
+        ["dxf", "stl", "step", "stp"]
+            .iter()
+            .any(|x| e.eq_ignore_ascii_case(x))
+    })
 }
 
 /// Whether a file is a measured sweep (Touchstone) rather than a deck.
@@ -436,6 +439,8 @@ pub struct App {
     editing_bands: bool,
     /// A CAD drawing being imported (its dialog is open).
     cad_import: Option<crate::views::cadimport::CadImport>,
+    /// The STEP export window, while it's open.
+    step_export: Option<crate::views::stepexport::StepExport>,
     /// A project's snapshots being swept again: name, deck text, and the
     /// sweep when it's done (`None` if it couldn't be run).
     snapshot_jobs: Vec<(String, String, Receiver<Option<SweepResults>>)>,
@@ -586,6 +591,7 @@ impl App {
             help: None,
             editing_bands: false,
             cad_import: None,
+            step_export: None,
             snapshot_jobs: Vec::new(),
             applied_zoom: 1.0,
             crop: None,
@@ -1721,6 +1727,20 @@ impl App {
             ui.close();
             self.export(text.into_bytes(), &format!("{stem}.stl"), "STL", "stl");
         }
+        if ui
+            .add_enabled(has_wires, egui::Button::new("Solid model (STEP)…"))
+            .on_hover_text("The wires as solid tubes in millimetres, each part of the antenna a separate body, and plates, reflectors and dishes as solid sheets if you like (FreeCAD, Fusion, SolidWorks and others)")
+            .clicked()
+            && let Some(m) = &self.data.model
+        {
+            ui.close();
+            let choice = crate::views::stepexport::StepExport::new(&m.deck, &m.wires);
+            if choice.meshes.is_empty() {
+                self.export_step(&choice);
+            } else {
+                self.step_export = Some(choice);
+            }
+        }
         ui.separator();
         if ui
             .add_enabled(self.data.model.is_some(), egui::Button::new("Report (web page)…"))
@@ -2004,12 +2024,70 @@ impl App {
         }
     }
 
+    /// Shows the STEP export window while it's open.
+    fn step_dialog(&mut self, ctx: &egui::Context) {
+        use crate::views::stepexport::Outcome;
+        let Some(choice) = &mut self.step_export else {
+            return;
+        };
+        match choice.ui(ctx) {
+            Outcome::Open => {}
+            Outcome::Cancel => self.step_export = None,
+            Outcome::Export => {
+                if let Some(choice) = self.step_export.take() {
+                    self.export_step(&choice);
+                }
+            }
+        }
+    }
+
+    /// Writes the model as STEP (asking where): wires as tubes, a body for
+    /// each set joined together, and the chosen meshes as solid sheets.
+    fn export_step(&mut self, choice: &crate::views::stepexport::StepExport) {
+        let stem = self.stem();
+        let Some(m) = &self.data.model else { return };
+        let Ok(numeric) = &m.numeric else {
+            self.data.message(
+                Level::Error,
+                "The deck doesn't read, so there's nothing to export.",
+            );
+            return;
+        };
+        // The feedline's shield is a modelling aid, not a part to build.
+        let mut skip: Vec<i64> = straws_core::deck::shield::shield_tag(&m.deck)
+            .into_iter()
+            .collect();
+        let sheets: Vec<_> = choice.meshes.iter().filter(|c| c.solid).collect();
+        for c in &sheets {
+            skip.extend(&c.tags);
+        }
+        let sheet = straws_core::analysis::build::build_sheet(&m.segments, &m.deck, numeric, &skip);
+        let mut bodies = straws_core::step::bodies(&sheet, &m.segments);
+        for c in sheets {
+            bodies.push(straws_core::step::Body {
+                name: c.name.clone(),
+                rods: Vec::new(),
+                sheets: vec![crate::views::stepexport::mesh(
+                    &c.name,
+                    &c.tags,
+                    &m.wires,
+                    choice.thickness(c),
+                )],
+            });
+        }
+        let text = straws_core::step::write(&bodies, &stem);
+        self.export(text.into_bytes(), &format!("{stem}.step"), "STEP", "step");
+    }
+
     fn import_drawing_dialog(&mut self) {
         if self.dialog.is_some() {
             return;
         }
         let mut dialog = rfd::FileDialog::new()
-            .add_filter("CAD drawings and models", &["dxf", "DXF", "stl", "STL"])
+            .add_filter(
+                "CAD drawings and models",
+                &["dxf", "DXF", "step", "STEP", "stp", "STP", "stl", "STL"],
+            )
             .add_filter("All files", &["*"]);
         if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
@@ -2206,10 +2284,10 @@ impl App {
                     self.import_dialog();
                 }
                 if ui
-                    .button("Import from CAD (DXF, STL)…")
+                    .button("Import from CAD (DXF, STEP, STL)…")
                     .on_hover_text(
                         "Lines, arcs, circles and splines from a wire-frame drawing (DXF), or the \
-                         straight tubes of a solid model (STL), become wires",
+                         straight round tubes of a solid model (STEP or STL), become wires",
                     )
                     .clicked()
                 {
@@ -2662,6 +2740,7 @@ impl eframe::App for App {
         crate::views::newvar::prompt(&ctx, &mut self.data);
         crate::views::bands::editor(&ctx, &mut self.settings, &mut self.editing_bands);
         self.drawing_dialog(&ctx);
+        self.step_dialog(&ctx);
         // The version comes from Cargo.toml when the program is built.
         let app = concat!("STRAWS ", env!("CARGO_PKG_VERSION"));
         let title = match &self.data.model {

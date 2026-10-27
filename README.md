@@ -47,7 +47,8 @@ with a paid certificate; the code is all here to read and build yourself.
 - Make any length, spacing, height or angle a variable with a right-click and
   drag its slider.
 - Add radials, ground grids, plates, corner reflectors and dishes in a click.
-- Import wire-frame drawings (DXF) and solid models' tubes (STL) from CAD.
+- Import wire-frame drawings (DXF) and solid models' tubes (STEP, STL) from
+  CAD.
 - Opens 4nec2 decks, including its symbols, units, current sources, traps and
   insulated wire.
 
@@ -83,8 +84,9 @@ with a paid certificate; the code is all here to read and build yourself.
 - `.straws` projects keep the antenna with its notes, feedline, optimiser
   set-up, snapshots and measurements; plain `.nec` decks open and save too.
 - Compare designs by snapshot, undo and redo everything.
-- Export CSV, Touchstone, DXF and STL, SVG and PNG images, a report and a
-  build sheet with the cut list.
+- Export a STEP solid model for CAD (each part a separate body, reflectors
+  and dishes as solid sheets if you like), CSV, Touchstone, DXF and STL, SVG
+  and PNG images, a report and a build sheet with the cut list.
 
 ## Screenshots
 
