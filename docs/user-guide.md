@@ -33,7 +33,18 @@ With nothing open, the 3D model view offers three ways in:
   their units and keep exact sizes; assemblies are followed, so a part used
   several times gives a wire each time, each in its place. A pipe's inside
   wall is left out, and a tube that meets another (a T) ends on the other's
-  middle, where the wires join. STL files don't say their units:
+  middle, where the wires join.
+- **Solid sheets in a STEP model** (a plate, a corner reflector, a dish, as
+  STRAWS writes them with *solid sheets* ticked, or as drawn in CAD) are
+  listed in the import window under *Solid sheets*. Each can come in as one of
+  STRAWS's reflectors made of a wire mesh: its shape (flat, V, parabolic
+  cylinder, dish, two curvatures, circular cylinder or sphere), size, focal
+  length or radius, which way it faces and where it sits are fitted to the
+  sheet, and its wires are as thick as the sheet. The cells are chosen for a
+  mesh of about a thirteenth of a wavelength at the highest frequency you
+  give; change them there or later. Once imported, click the mesh in the 3D
+  view to change anything in the reflector's panel. Untick a sheet to leave it
+  out. STL files don't say their units:
   millimetres is assumed, and the overall size shown tells you if that's
   wrong. Each tube is listed with its length and diameter; untick a boom or
   mast you don't want as a wire. Flat pieces (tube ends, plates, the faces of

@@ -2136,6 +2136,7 @@ impl App {
                 radius,
                 mhz,
                 new_model,
+                reflectors,
             } => {
                 let file = import.file.clone();
                 self.cad_import = None;
@@ -2143,6 +2144,13 @@ impl App {
                     1
                 } else {
                     self.data.model.as_ref().map_or(1, |m| m.next_tag())
+                };
+                // New geometry goes before the Ground view's height card, so
+                // take its lift off to land where the file says.
+                let lift = if new_model {
+                    0.0
+                } else {
+                    self.data.model.as_ref().map_or(0.0, |m| m.lift())
                 };
                 let cards: Vec<_> = wires
                     .iter()
@@ -2155,31 +2163,68 @@ impl App {
                         straws_core::deck::edit::NewWire {
                             tag: first + k as i64,
                             segments: crate::views::wires::auto_segments(length, mhz),
-                            a: w.a,
-                            b: w.b,
+                            a: [w.a[0], w.a[1], w.a[2] - lift],
+                            b: [w.b[0], w.b[1], w.b[2] - lift],
                             radius: w.radius.unwrap_or(radius),
                             comment: Some(w.layer.clone()),
                         }
                     })
                     .collect();
-                let message = format!(
-                    "Imported {} wires from {file}. To run it, feed a wire: select it, then Feed this wire (Wires view, or right-click it in the 3D view).",
-                    cards.len()
+                // Each sheet as a reflector, named dish1, dish2...
+                let add_sheets = |deck: &mut straws_core::deck::Deck| -> Vec<String> {
+                    let mut tag = first + cards.len() as i64;
+                    let mut problems = Vec::new();
+                    for spec in &reflectors {
+                        let mut spec = spec.clone();
+                        spec.name = deck.reflector_name();
+                        spec.vertex[2] -= lift;
+                        match deck.add_reflector(&spec, tag) {
+                            Ok(()) => {
+                                tag = straws_core::deck::reflectors::reflector_sets(deck)
+                                    .iter()
+                                    .filter(|r| r.name == spec.name)
+                                    .flat_map(|r| r.tags.iter().copied())
+                                    .max()
+                                    .unwrap_or(tag)
+                                    + 1;
+                            }
+                            Err(e) => problems.push(format!("{}: {e}", spec.name)),
+                        }
+                    }
+                    problems
+                };
+                let mut message = format!("Imported {} wires", cards.len());
+                if !reflectors.is_empty() {
+                    message += &format!(
+                        " and {} reflector{} (select one in the 3D view to change it)",
+                        reflectors.len(),
+                        if reflectors.len() == 1 { "" } else { "s" }
+                    );
+                }
+                message += &format!(
+                    " from {file}. To run it, feed a wire: select it, then Feed this wire (Wires view, or right-click it in the 3D view)."
                 );
+                let mut problems = Vec::new();
                 if new_model {
                     let mut deck = straws_core::deck::Deck::parse(&format!(
                         "CM Imported from {file}\nCE\nGE 0\nGN -1\nFR 0 1 0 0 {mhz} 0\nEN\n"
                     ));
                     deck.add_wires(&cards);
+                    problems = add_sheets(&mut deck);
                     let name = std::path::Path::new(&file)
                         .file_stem()
                         .map_or("Imported".into(), |s| s.to_string_lossy().into_owned());
                     self.leave(Leave::Text(name, deck.to_text()));
                 } else if let Some(m) = &mut self.data.model {
                     m.deck.add_wires(&cards);
+                    problems = add_sheets(&mut m.deck);
                     self.data.edit_event = Some(true);
                 }
                 self.data.message(Level::Info, message);
+                for p in problems {
+                    self.data
+                        .message(Level::Error, format!("Couldn't make a reflector for {p}"));
+                }
             }
         }
     }

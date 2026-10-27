@@ -11,6 +11,7 @@ pub mod export;
 pub mod optimise;
 pub mod output;
 pub mod reference;
+pub mod sheetfit;
 pub mod solver;
 pub mod step;
 pub mod stl;

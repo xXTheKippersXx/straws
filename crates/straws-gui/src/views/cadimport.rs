@@ -2,7 +2,9 @@
 //! STL): the choices before the wires go in.
 
 use eframe::egui::{self, RichText};
+use straws_core::deck::reflectors::ReflectorSpec;
 use straws_core::dxf::{self, Drawing, DrawnWire, WireOptions};
+use straws_core::sheetfit::{Shape, SheetFit};
 use straws_core::{step, stl};
 
 /// Units a drawing may be in: name and metres per unit.
@@ -42,6 +44,19 @@ pub struct CadImport {
     preview: Vec<DrawnWire>,
     preview_key: Option<(usize, u64, u64, Vec<bool>)>,
     error: Option<String>,
+    /// Thin solid sheets in a STEP model (plates, corner reflectors,
+    /// dishes), which can come in as reflector meshes.
+    sheets: Vec<SheetChoice>,
+}
+
+/// A solid sheet and what to do with it.
+struct SheetChoice {
+    /// In the file's units.
+    fit: SheetFit,
+    /// Bring it in as a reflector mesh.
+    import: bool,
+    /// Cells across and up, once changed by hand.
+    cells: Option<[usize; 2]>,
 }
 
 /// What the dialog wants done.
@@ -55,6 +70,8 @@ pub enum Outcome {
         radius: f64,
         mhz: f64,
         new_model: bool,
+        /// Reflector meshes for the solid sheets (names to be given).
+        reflectors: Vec<ReflectorSpec>,
     },
 }
 
@@ -64,15 +81,15 @@ impl CadImport {
         let lower = file.to_ascii_lowercase();
         let is_step = lower.ends_with(".step") || lower.ends_with(".stp");
         if is_step || lower.ends_with(".stl") {
-            let (mut parts, mut unit) = if is_step {
+            let (mut parts, mut unit, mut sheets) = if is_step {
                 let read = step::read_step(&String::from_utf8_lossy(bytes))?;
-                (read.parts, read.metres_per_unit)
+                (read.parts, read.metres_per_unit, read.sheets)
             } else {
-                (stl::tubes(&stl::read_stl(bytes)?), None)
+                (stl::tubes(&stl::read_stl(bytes)?), None, Vec::new())
             };
-            if parts.tubes.is_empty() {
+            if parts.tubes.is_empty() && sheets.is_empty() {
                 return Err(format!(
-                    "no straight round tubes in it ({} flat pieces, {} other shapes)",
+                    "no straight round tubes or thin sheets in it ({} flat pieces, {} other shapes)",
                     parts.flat, parts.other
                 ));
             }
@@ -84,6 +101,9 @@ impl CadImport {
                     t.a = t.a.map(|v| v * m);
                     t.b = t.b.map(|v| v * m);
                     t.radius *= m;
+                }
+                for s in &mut sheets {
+                    *s = s.scaled(m);
                 }
                 unit = Some(1.0);
             }
@@ -112,6 +132,14 @@ impl CadImport {
                 preview: Vec::new(),
                 preview_key: None,
                 error: None,
+                sheets: sheets
+                    .into_iter()
+                    .map(|fit| SheetChoice {
+                        fit,
+                        import: true,
+                        cells: None,
+                    })
+                    .collect(),
             });
         }
         let text = String::from_utf8_lossy(bytes).into_owned();
@@ -158,7 +186,19 @@ impl CadImport {
             preview: Vec::new(),
             preview_key: None,
             error: None,
+            sheets: Vec::new(),
         })
+    }
+
+    /// A sheet in metres, and its cells: as chosen, or a mesh of a
+    /// thirteenth of a wavelength at the highest frequency (as Draw > Dish
+    /// makes).
+    fn sheet_in_metres(&self, k: usize) -> (SheetFit, [usize; 2]) {
+        let s = &self.sheets[k];
+        let fit = s.fit.scaled(UNITS[self.units].1);
+        let mesh = 299.792458 / self.mhz.max(1e-3) / 13.0;
+        let cells = s.cells.unwrap_or_else(|| fit.cells(mesh));
+        (fit, cells)
     }
 
     fn options(&self) -> WireOptions {
@@ -332,10 +372,94 @@ impl CadImport {
                         }
                     });
             }
+            if !self.sheets.is_empty() {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Solid sheets").strong());
+                ui.label(
+                    RichText::new(
+                        "These are solid plates, corner reflectors or dishes, not tubes. NEC-2 \
+                         models wires, so each can come in as a reflector made of a wire mesh, \
+                         its shape and size fitted to the sheet and its wires as thick as the \
+                         sheet. Afterwards, select it in the 3D view to change its size, shape \
+                         and cells.",
+                    )
+                    .weak(),
+                );
+                let len = |m: f64| short(m);
+                egui::ScrollArea::vertical()
+                    .id_salt("import sheets")
+                    .max_height(160.0)
+                    .show(ui, |ui| {
+                        for k in 0..self.sheets.len() {
+                            let (fit, cells) = self.sheet_in_metres(k);
+                            let shape = match fit.shape {
+                                Shape::ParabolicCylinder(f) | Shape::Paraboloid(f) => {
+                                    format!("{}, focal length {} m", fit.shape.label(), len(f))
+                                }
+                                Shape::TwoCurvatures(f, g) => format!(
+                                    "{}, focal lengths {} and {} m",
+                                    fit.shape.label(),
+                                    len(f),
+                                    len(g)
+                                ),
+                                Shape::Cylinder(r) | Shape::Sphere(r) => {
+                                    format!("{}, radius {} m", fit.shape.label(), len(r))
+                                }
+                                Shape::Vee(a) => format!("{} of {a:.1}°", fit.shape.label()),
+                                _ => fit.shape.label().to_string(),
+                            };
+                            let choice = &mut self.sheets[k];
+                            ui.checkbox(
+                                &mut choice.import,
+                                format!(
+                                    "Sheet {}: {shape}; {} x {} m, {:.2} mm thick, facing azimuth {:.1}°, elevation {:.1}°",
+                                    k + 1,
+                                    len(fit.size[0]),
+                                    len(fit.size[1]),
+                                    fit.thickness * 1000.0,
+                                    straws_core::sheetfit::snap_angle(fit.facing[0]),
+                                    straws_core::sheetfit::snap_angle(fit.facing[1])
+                                ),
+                            )
+                            .on_hover_text("Bring it in as a reflector made of wires");
+                            ui.add_enabled_ui(choice.import, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(24.0);
+                                    ui.label("Cells");
+                                    let mut c = cells;
+                                    let across = ui.add(
+                                        egui::DragValue::new(&mut c[0]).range(2..=80).suffix(" across"),
+                                    );
+                                    let up = ui.add(
+                                        egui::DragValue::new(&mut c[1]).range(2..=80).suffix(" up"),
+                                    );
+                                    if across.changed() || up.changed() {
+                                        choice.cells = Some(c);
+                                    }
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "about {:.0} mm each; wire {:.2} mm",
+                                            1000.0 * fit.size[0].max(fit.size[1])
+                                                / c[0].max(c[1]) as f64,
+                                            fit.thickness * 1000.0
+                                        ))
+                                        .weak(),
+                                    );
+                                });
+                            });
+                        }
+                    });
+            }
             ui.add_space(6.0);
             // What will come in: count and overall size, to catch wrong units.
             let n = self.preview.len();
-            if n == 0 {
+            let sheets_in = self.sheets.iter().filter(|s| s.import).count();
+            if n == 0 && sheets_in > 0 {
+                ui.label(format!(
+                    "{sheets_in} reflector{} from the sheets.",
+                    if sheets_in == 1 { "" } else { "s" }
+                ));
+            } else if n == 0 {
                 ui.colored_label(ui.visuals().warn_fg_color, "Nothing to import with these choices.");
             } else {
                 let mut lo = [f64::MAX; 3];
@@ -380,12 +504,20 @@ impl CadImport {
                 && parts.flat + parts.other > 0
             {
                 ui.label(
-                    RichText::new(format!(
-                        "Left out: {} flat pieces (tube ends, plates, faces of blocks) and {} other \
-                         shapes (bent tubes, dishes). Model plates and dishes with Draw > Plate or \
-                         Dish instead.",
-                        parts.flat, parts.other
-                    ))
+                    RichText::new(if self.sheets.is_empty() {
+                        format!(
+                            "Left out: {} flat pieces (tube ends, plates, faces of blocks) and {} \
+                             other shapes (bent tubes, dishes). Model plates and dishes with Draw > \
+                             Plate or Dish instead.",
+                            parts.flat, parts.other
+                        )
+                    } else {
+                        format!(
+                            "Left out: {} flat pieces (tube ends, faces of blocks) and {} other \
+                             shapes (bent tubes, thick parts).",
+                            parts.flat, parts.other
+                        )
+                    })
                     .weak(),
                 );
             }
@@ -405,10 +537,13 @@ impl CadImport {
                 );
             }
             ui.label(
-                RichText::new(
+                RichText::new(if self.sheets.is_empty() {
                     "Only wires: NEC-2 can't model solid parts, dielectrics or plastic. Draw a \
-                     solid reflector as a wire grid.",
-                )
+                     solid reflector as a wire grid."
+                } else {
+                    "Only wires: NEC-2 can't model solid parts, dielectrics or plastic, which is \
+                     why sheets come in as wire meshes."
+                })
                 .weak(),
             );
             if let Some(e) = &self.error {
@@ -416,7 +551,17 @@ impl CadImport {
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(n > 0, egui::Button::new("Import")).clicked() {
+                if ui
+                    .add_enabled(n > 0 || sheets_in > 0, egui::Button::new("Import"))
+                    .clicked()
+                {
+                    let reflectors = (0..self.sheets.len())
+                        .filter(|k| self.sheets[*k].import)
+                        .map(|k| {
+                            let (fit, cells) = self.sheet_in_metres(k);
+                            fit.reflector("", cells)
+                        })
+                        .collect();
                     let mut wires = std::mem::take(&mut self.preview);
                     if !(solid && self.own_diameter) {
                         for w in &mut wires {
@@ -429,6 +574,7 @@ impl CadImport {
                         radius: self.diameter_mm / 2000.0,
                         mhz: self.mhz,
                         new_model: self.new_model || !has_model,
+                        reflectors,
                     };
                 }
                 if ui.button("Cancel").clicked() {

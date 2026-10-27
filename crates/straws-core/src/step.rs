@@ -1440,6 +1440,14 @@ struct CylFace {
     solid: usize,
 }
 
+/// One solid's share of a representation's faces.
+struct Share {
+    planes: usize,
+    other: usize,
+    triangles: std::ops::Range<usize>,
+    points: Vec<P3>,
+}
+
 /// Faces of a solid (or a shell), sorted into kinds.
 #[derive(Default)]
 struct Faces {
@@ -1644,6 +1652,473 @@ impl Model<'_> {
     }
 }
 
+impl Model<'_> {
+    /// The faces of a solid or shell item.
+    fn face_ids(&self, id: u64, out: &mut Vec<u64>, depth: usize) {
+        let Some((kind, p)) = self.get(id).and_then(Entity::simple) else {
+            return;
+        };
+        if depth > 8 {
+            return;
+        }
+        match kind {
+            "MANIFOLD_SOLID_BREP" | "FACETED_BREP" | "BREP_WITH_VOIDS" => {
+                if let Some(shell) = p.get(1).and_then(Value::as_ref) {
+                    self.face_ids(shell, out, depth + 1);
+                }
+            }
+            "SHELL_BASED_SURFACE_MODEL" => {
+                for sh in p.get(1).into_iter().flat_map(Value::refs) {
+                    self.face_ids(sh, out, depth + 1);
+                }
+            }
+            "CLOSED_SHELL" | "OPEN_SHELL" => out.extend(p.get(1).into_iter().flat_map(Value::refs)),
+            _ => {}
+        }
+    }
+
+    /// Points spread over a solid's surface, enough to see its shape: the
+    /// corners, points along its circular edges, the control points of
+    /// its curves and freeform surfaces, and points over spheres and
+    /// surfaces of revolution.
+    fn solid_points(&self, item: u64) -> Vec<P3> {
+        let mut faces = Vec::new();
+        self.face_ids(item, &mut faces, 0);
+        let mut out = Vec::new();
+        for face in faces {
+            let Some((kind, p)) = self.get(face).and_then(Entity::simple) else {
+                continue;
+            };
+            if !matches!(kind, "ADVANCED_FACE" | "FACE_SURFACE" | "FACE") {
+                continue;
+            }
+            let bounds: Vec<u64> = p.get(1).into_iter().flat_map(Value::refs).collect();
+            let rim = self.points_under(&bounds, true);
+            // Points spread evenly over a curved face stand for it alone:
+            // its edges' points would crowd one side (a sphere's seam).
+            let inside = p
+                .get(2)
+                .and_then(Value::as_ref)
+                .map(|surface| self.surface_points(surface, &rim))
+                .unwrap_or_default();
+            if inside.is_empty() {
+                out.extend(rim);
+            } else {
+                out.extend(thinned(inside));
+            }
+        }
+        out
+    }
+
+    /// The 3D points under these entities (placements, directions and
+    /// parameter-space curves left out), with circular edges sampled.
+    fn points_under(&self, start: &[u64], edges: bool) -> Vec<P3> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        let mut stack: Vec<u64> = start.to_vec();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(ent) = self.get(id) else { continue };
+            if let Some(curve) = self.bspline(id, false) {
+                out.extend(curve.curve_points(24));
+                continue;
+            }
+            let Some((kind, p)) = ent.simple() else {
+                for (_, q) in &ent.parts {
+                    collect_refs(q, &mut stack);
+                }
+                continue;
+            };
+            match kind {
+                "CARTESIAN_POINT" => {
+                    if let Some(pt) = self.point(id) {
+                        out.push(pt);
+                    }
+                    continue;
+                }
+                "AXIS2_PLACEMENT_3D"
+                | "AXIS1_PLACEMENT"
+                | "AXIS2_PLACEMENT_2D"
+                | "DIRECTION"
+                | "VECTOR"
+                | "PCURVE"
+                | "DEFINITIONAL_REPRESENTATION" => continue,
+                k if edges && (k.ends_with("_SURFACE") || k == "PLANE") => continue,
+                "EDGE_CURVE" => out.extend(self.edge_points(p)),
+                _ => {}
+            }
+            collect_refs(p, &mut stack);
+        }
+        out
+    }
+
+    /// Points along an edge: an arc of a circle sampled, a straight edge
+    /// cut into tenths.
+    fn edge_points(&self, p: &[Value]) -> Vec<P3> {
+        let Some(v1) = p.get(1).and_then(Value::as_ref) else {
+            return Vec::new();
+        };
+        let Some(v2) = p.get(2).and_then(Value::as_ref) else {
+            return Vec::new();
+        };
+        let Some(mut curve) = p.get(3).and_then(Value::as_ref) else {
+            return Vec::new();
+        };
+        for _ in 0..4 {
+            match self.get(curve).and_then(Entity::simple) {
+                Some((
+                    "SURFACE_CURVE" | "SEAM_CURVE" | "BOUNDED_SURFACE_CURVE" | "TRIMMED_CURVE",
+                    q,
+                )) => match q.get(1).and_then(Value::as_ref) {
+                    Some(c) => curve = c,
+                    None => return Vec::new(),
+                },
+                _ => break,
+            }
+        }
+        let vertex = |v: u64| self.point(self.of(v, "VERTEX_POINT")?.get(1)?.as_ref()?);
+        if self.of(curve, "LINE").is_some() {
+            return match (vertex(v1), vertex(v2)) {
+                (Some(a), Some(b)) => (1..10)
+                    .map(|k| add(a, scale(sub(b, a), k as f64 / 10.0)))
+                    .collect(),
+                _ => Vec::new(),
+            };
+        }
+        let Some(circle) = self.of(curve, "CIRCLE") else {
+            return Vec::new();
+        };
+        let (Some(f), Some(r)) = (
+            circle
+                .get(1)
+                .and_then(Value::as_ref)
+                .and_then(|f| self.frame(f)),
+            circle.get(2).and_then(Value::as_num),
+        ) else {
+            return Vec::new();
+        };
+        let angle = |q: P3| {
+            let v = sub(q, f.0[3]);
+            dot(v, f.0[1]).atan2(dot(v, f.0[0]))
+        };
+        let (from, span) = match (vertex(v1), vertex(v2)) {
+            (Some(a), Some(b)) if v1 != v2 && length(sub(a, b)) > 1e-9 * r.max(1e-9) => {
+                let same_sense = !matches!(p.get(4), Some(Value::Enum(e)) if e == "F");
+                let (s, e) = if same_sense {
+                    (angle(a), angle(b))
+                } else {
+                    (angle(b), angle(a))
+                };
+                (s, (e - s).rem_euclid(2.0 * std::f64::consts::PI))
+            }
+            _ => (0.0, 2.0 * std::f64::consts::PI),
+        };
+        (0..=24)
+            .map(|k| {
+                let t = from + span * k as f64 / 24.0;
+                f.point([r * t.cos(), r * t.sin(), 0.0])
+            })
+            .collect()
+    }
+
+    /// Points over a face's surface, from its rim: control points of
+    /// freeform surfaces, a cap of a sphere, or a surface of revolution's
+    /// curve turned round its axis.
+    fn surface_points(&self, surface: u64, rim: &[P3]) -> Vec<P3> {
+        let Some(ent) = self.get(surface) else {
+            return Vec::new();
+        };
+        let name = ent
+            .parts
+            .iter()
+            .map(|p| p.0.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if let Some(b) = self.bspline(surface, true) {
+            return b.surface_points(16);
+        }
+        if name.contains("B_SPLINE_SURFACE") || name.contains("BEZIER_SURFACE") {
+            return self.points_under(&[surface], false);
+        }
+        if let Some(sp) = ent.part("SPHERICAL_SURFACE")
+            && let (Some(f), Some(r)) = (
+                sp.get(1)
+                    .and_then(Value::as_ref)
+                    .and_then(|f| self.frame(f)),
+                sp.get(2).and_then(Value::as_num),
+            )
+            && !rim.is_empty()
+        {
+            // The cap the rim encloses: its middle direction and width.
+            let c = f.0[3];
+            // The narrowest cone round the rim's directions (its seam and
+            // pole count too): step towards the farthest each time.
+            let dirs: Vec<P3> = rim.iter().map(|q| unit(sub(*q, c))).collect();
+            let mut mid = unit(dirs.iter().fold([0.0; 3], |acc, d| add(acc, *d)));
+            for k in 1..400 {
+                let far = dirs
+                    .iter()
+                    .min_by(|a, b| dot(**a, mid).total_cmp(&dot(**b, mid)))
+                    .copied()
+                    .unwrap_or(mid);
+                mid = unit(add(mid, scale(sub(far, mid), 1.0 / (k as f64 + 1.0))));
+            }
+            let widest = rim
+                .iter()
+                .map(|q| dot(unit(sub(*q, c)), mid).clamp(-1.0, 1.0).acos())
+                .fold(0.0, f64::max);
+            let e1 = square_to(mid);
+            let e2 = cross(mid, e1);
+            let mut out = vec![add(c, scale(mid, r))];
+            for ring in 1..=4 {
+                let th = widest * ring as f64 / 4.0;
+                for k in 0..16 {
+                    let ph = 2.0 * std::f64::consts::PI * k as f64 / 16.0;
+                    let d = add(
+                        scale(mid, th.cos()),
+                        scale(add(scale(e1, ph.cos()), scale(e2, ph.sin())), th.sin()),
+                    );
+                    out.push(add(c, scale(d, r)));
+                }
+            }
+            return out;
+        }
+        if let Some(sr) = ent.part("SURFACE_OF_REVOLUTION")
+            && let (Some(curve), Some(axis)) = (
+                sr.get(1).and_then(Value::as_ref),
+                sr.get(2).and_then(Value::as_ref),
+            )
+            && let Some(ax) = self.of(axis, "AXIS1_PLACEMENT")
+            && let Some(o) = ax
+                .get(1)
+                .and_then(Value::as_ref)
+                .and_then(|q| self.point(q))
+        {
+            let d = ax
+                .get(2)
+                .and_then(Value::as_ref)
+                .and_then(|q| self.direction(q))
+                .unwrap_or([0.0, 0.0, 1.0]);
+            let profile = self.points_under(&[curve], false);
+            let mut out = Vec::new();
+            for k in 0..24 {
+                let t = 2.0 * std::f64::consts::PI * k as f64 / 24.0;
+                let (cs, sn) = (t.cos(), t.sin());
+                for q in &profile {
+                    // Rodrigues' rotation about the axis through o.
+                    let v = sub(*q, o);
+                    let along = scale(d, dot(v, d));
+                    let rot = add(add(scale(sub(v, along), cs), scale(cross(d, v), sn)), along);
+                    out.push(add(o, rot));
+                }
+            }
+            return out;
+        }
+        Vec::new()
+    }
+}
+
+/// A B-spline curve or surface: degrees, control points (rows of a
+/// surface's net), weights and full knot vectors.
+struct BSpline {
+    degree: [usize; 2],
+    control: Vec<Vec<P3>>,
+    weights: Vec<Vec<f64>>,
+    knots: [Vec<f64>; 2],
+}
+
+impl BSpline {
+    /// Points along a curve, `n` intervals over its parameter range.
+    fn curve_points(&self, n: usize) -> Vec<P3> {
+        let (p, k) = (self.degree[1], &self.knots[1]);
+        let ctrl = &self.control[0];
+        let w = &self.weights[0];
+        let (a, b) = (k[p], k[ctrl.len()]);
+        (0..=n)
+            .map(|i| {
+                let t = a + (b - a) * i as f64 / n as f64;
+                crate::dxf::de_boor(t, p, k, ctrl, &|j| w[j])
+            })
+            .collect()
+    }
+
+    /// Points over a surface, an `n` x `n` grid of its parameters.
+    fn surface_points(&self, n: usize) -> Vec<P3> {
+        let [pu, pv] = self.degree;
+        let [ku, kv] = &self.knots;
+        let (nu, nv) = (self.control.len(), self.control[0].len());
+        let range = |k: &[f64], p: usize, n: usize| (k[p], k[n]);
+        let (u0, u1) = range(ku, pu, nu);
+        let (v0, v1) = range(kv, pv, nv);
+        let mut out = Vec::new();
+        for i in 0..=n {
+            let v = v0 + (v1 - v0) * i as f64 / n as f64;
+            // Each row along v, kept homogeneous (x w, y w, z w as a point,
+            // w apart), then the column along u.
+            let mut col = Vec::with_capacity(nu);
+            let mut wcol = Vec::with_capacity(nu);
+            for r in 0..nu {
+                let row = &self.control[r];
+                let w = &self.weights[r];
+                let lifted: Vec<P3> = row.iter().zip(w).map(|(q, wi)| scale(*q, *wi)).collect();
+                let num = crate::dxf::de_boor(v, pv, kv, &lifted, &|_| 1.0);
+                let ws: Vec<P3> = w.iter().map(|wi| [*wi, 0.0, 0.0]).collect();
+                let den = crate::dxf::de_boor(v, pv, kv, &ws, &|_| 1.0)[0];
+                col.push(num);
+                wcol.push(den);
+            }
+            for j in 0..=n {
+                let u = u0 + (u1 - u0) * j as f64 / n as f64;
+                let num = crate::dxf::de_boor(u, pu, ku, &col, &|_| 1.0);
+                let ws: Vec<P3> = wcol.iter().map(|wi| [*wi, 0.0, 0.0]).collect();
+                let den = crate::dxf::de_boor(u, pu, ku, &ws, &|_| 1.0)[0];
+                if den != 0.0 {
+                    out.push(scale(num, 1.0 / den));
+                }
+            }
+        }
+        out
+    }
+}
+
+impl Model<'_> {
+    /// A B-spline curve (or surface, if `surface`), simple or rational.
+    fn bspline(&self, id: u64, surface: bool) -> Option<BSpline> {
+        let ent = self.get(id)?;
+        let (base, knots_part, rational) = if surface {
+            (
+                "B_SPLINE_SURFACE",
+                "B_SPLINE_SURFACE_WITH_KNOTS",
+                "RATIONAL_B_SPLINE_SURFACE",
+            )
+        } else {
+            (
+                "B_SPLINE_CURVE",
+                "B_SPLINE_CURVE_WITH_KNOTS",
+                "RATIONAL_B_SPLINE_CURVE",
+            )
+        };
+        // A simple entity has a name first and its knots after the shape's
+        // own fields; a complex one splits them into parts.
+        let (shape, knots, weights): (Vec<Value>, Vec<Value>, Option<&Value>) =
+            if let Some((kind, p)) = ent.simple() {
+                if kind != knots_part {
+                    return None;
+                }
+                let own = if surface { 8 } else { 6 };
+                (p.get(1..own)?.to_vec(), p.get(own..)?.to_vec(), None)
+            } else {
+                let shape = ent.part(base)?.to_vec();
+                let knots = ent.part(knots_part)?.to_vec();
+                let weights = ent.part(rational).and_then(|w| w.first());
+                (shape, knots, weights)
+            };
+        let int = |v: &Value| v.as_num().map(|x| x as usize);
+        let full = |mults: &Value, values: &Value| -> Vec<f64> {
+            mults
+                .as_list()
+                .iter()
+                .zip(values.as_list())
+                .flat_map(|(m, k)| {
+                    let m = m.as_num().unwrap_or(1.0).max(0.0) as usize;
+                    std::iter::repeat_n(k.as_num().unwrap_or(0.0), m)
+                })
+                .collect()
+        };
+        let points = |v: &Value| -> Option<Vec<P3>> {
+            v.as_list()
+                .iter()
+                .map(|q| self.point(q.as_ref()?))
+                .collect()
+        };
+        if surface {
+            let (du, dv) = (int(shape.first()?)?, int(shape.get(1)?)?);
+            let control: Vec<Vec<P3>> = shape
+                .get(2)?
+                .as_list()
+                .iter()
+                .map(points)
+                .collect::<Option<_>>()?;
+            let ku = full(knots.first()?, knots.get(2)?);
+            let kv = full(knots.get(1)?, knots.get(3)?);
+            let (nu, nv) = (control.len(), control.first()?.len());
+            if nu == 0 || nv == 0 || ku.len() != nu + du + 1 || kv.len() != nv + dv + 1 {
+                return None;
+            }
+            let weights: Vec<Vec<f64>> = match weights {
+                Some(w) => w
+                    .as_list()
+                    .iter()
+                    .map(|row| {
+                        row.as_list()
+                            .iter()
+                            .map(|x| x.as_num().unwrap_or(1.0))
+                            .collect()
+                    })
+                    .collect(),
+                None => vec![vec![1.0; nv]; nu],
+            };
+            if weights.len() != nu || weights.iter().any(|r| r.len() != nv) {
+                return None;
+            }
+            Some(BSpline {
+                degree: [du, dv],
+                control,
+                weights,
+                knots: [ku, kv],
+            })
+        } else {
+            let d = int(shape.first()?)?;
+            let control = points(shape.get(1)?)?;
+            let k = full(knots.first()?, knots.get(1)?);
+            let n = control.len();
+            if n == 0 || k.len() != n + d + 1 {
+                return None;
+            }
+            let w: Vec<f64> = match weights {
+                Some(w) => w
+                    .as_list()
+                    .iter()
+                    .map(|x| x.as_num().unwrap_or(1.0))
+                    .collect(),
+                None => vec![1.0; n],
+            };
+            if w.len() != n {
+                return None;
+            }
+            Some(BSpline {
+                degree: [0, d],
+                control: vec![control],
+                weights: vec![w],
+                knots: [Vec::new(), k],
+            })
+        }
+    }
+}
+
+/// A face's points spaced at least a fortieth of its size apart, so a
+/// narrow face (a sheet's edge) adds a few points, not as many as a broad
+/// one.
+fn thinned(points: Vec<P3>) -> Vec<P3> {
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for p in &points {
+        for i in 0..3 {
+            lo[i] = lo[i].min(p[i]);
+            hi[i] = hi[i].max(p[i]);
+        }
+    }
+    let gap = length(sub(hi, lo)) / 40.0;
+    let mut kept: Vec<P3> = Vec::new();
+    for p in points {
+        if kept.iter().all(|q| length(sub(p, *q)) >= gap) {
+            kept.push(p);
+        }
+    }
+    kept
+}
+
 fn collect_refs(values: &[Value], stack: &mut Vec<u64>) {
     for v in values {
         match v {
@@ -1654,10 +2129,14 @@ fn collect_refs(values: &[Value], stack: &mut Vec<u64>) {
     }
 }
 
-/// What a STEP file holds: its tubes (in the file's units) and the units.
+/// What a STEP file holds: its tubes and thin sheets (in the file's
+/// units) and the units.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Solids {
     pub parts: Parts,
+    /// Thin solid sheets (plates, corner reflectors, dishes) fitted as
+    /// reflectors; their faces aren't counted in `parts`.
+    pub sheets: Vec<crate::sheetfit::SheetFit>,
     /// Metres per unit, as the file says.
     pub metres_per_unit: Option<f64>,
 }
@@ -1839,16 +2318,30 @@ pub fn read_step(text: &str) -> Result<Solids, String> {
     let mut triangles: Vec<[P3; 3]> = Vec::new();
     let mut done = HashSet::new();
     let mut next_solid = 0;
+    let mut sheets: Vec<(Vec<P3>, crate::sheetfit::SheetFit)> = Vec::new();
     for (k, &rep) in reps.iter().enumerate() {
         let mut faces = Faces::default();
         let mut solids = 0;
+        // Each solid's share of the faces, and points over its surface.
+        let mut shares: Vec<Share> = Vec::new();
         for item in rep_items(&entities[&rep]) {
             if done.insert(item) {
-                let before = faces.cylinders.len();
+                let before = (
+                    faces.cylinders.len(),
+                    faces.planes,
+                    faces.other,
+                    faces.triangles.len(),
+                );
                 m.faces_of_item(item, &mut faces);
-                for c in &mut faces.cylinders[before..] {
+                for c in &mut faces.cylinders[before.0..] {
                     c.solid = solids;
                 }
+                shares.push(Share {
+                    planes: faces.planes - before.1,
+                    other: faces.other - before.2,
+                    triangles: before.3..faces.triangles.len(),
+                    points: m.solid_points(item),
+                });
                 solids += 1;
             }
         }
@@ -1859,24 +2352,53 @@ pub fn read_step(text: &str) -> Result<Solids, String> {
         {
             continue;
         }
+        // A solid holding a whole round tube is tubes (a T of two tubes
+        // can lie flat like a sheet).
+        let has_tube: Vec<bool> = (0..shares.len())
+            .map(|k| {
+                let mine: Vec<CylFace> = faces
+                    .cylinders
+                    .iter()
+                    .filter(|c| c.solid == k)
+                    .copied()
+                    .collect();
+                !join_cylinders(&mine).0.is_empty()
+            })
+            .collect();
         let group = find(&mut parent, k);
         let mut at = Vec::new();
         places(group, &links, 0, &mut at);
         for f in &at {
-            out.flat += faces.planes;
-            out.other += faces.other;
+            // Thin sheets are fitted as reflectors; the rest is sorted
+            // into tubes and what's left out.
+            let mut sheet = vec![false; shares.len()];
+            for (k, share) in shares.iter().enumerate() {
+                let points: Vec<P3> = share.points.iter().map(|p| f.point(*p)).collect();
+                let fit = (!has_tube[k])
+                    .then(|| crate::sheetfit::fit_sheet(&points, None))
+                    .flatten();
+                if let Some(fit) = fit {
+                    sheet[k] = true;
+                    sheets.push((points, fit));
+                } else {
+                    out.flat += share.planes;
+                    out.other += share.other;
+                    for t in &faces.triangles[share.triangles.clone()] {
+                        triangles.push(t.map(|p| f.point(p)));
+                    }
+                }
+            }
             for c in &faces.cylinders {
-                cylinders.push(CylFace {
-                    centre: f.point(c.centre),
-                    axis: f.vector(c.axis),
-                    solid: next_solid + c.solid,
-                    ..*c
-                });
+                if sheet.get(c.solid) != Some(&true) {
+                    cylinders.push(CylFace {
+                        centre: f.point(c.centre),
+                        axis: f.vector(c.axis),
+                        solid: next_solid + c.solid,
+                        ..*c
+                    });
+                }
             }
             next_solid += solids;
-            for t in &faces.triangles {
-                triangles.push(t.map(|p| f.point(p)));
-            }
         }
     }
 
@@ -1889,8 +2411,25 @@ pub fn read_step(text: &str) -> Result<Solids, String> {
         out.tubes.extend(mesh.tubes);
     }
     out.tubes = without_inner_walls(tubes.into_iter().chain(out.tubes).collect());
+    // Flat sheets face the rest of the antenna (the tubes' middle).
+    let towards = (!out.tubes.is_empty()).then(|| {
+        let n = out.tubes.len() as f64;
+        out.tubes
+            .iter()
+            .fold([0.0; 3], |acc, t| add(acc, scale(add(t.a, t.b), 0.5 / n)))
+    });
+    let sheets = sheets
+        .into_iter()
+        .map(|(points, fit)| match fit.shape {
+            crate::sheetfit::Shape::Flat if towards.is_some() => {
+                crate::sheetfit::fit_sheet(&points, towards).unwrap_or(fit)
+            }
+            _ => fit,
+        })
+        .collect();
     Ok(Solids {
         parts: out,
+        sheets,
         metres_per_unit: unit,
     })
 }
@@ -2301,6 +2840,150 @@ END-ISO-10303-21;
         );
         assert!(read.parts.flat >= 6, "{:?}", read.parts);
         assert!(read.parts.other >= 1, "the ring");
+    }
+
+    /// Thin sheets made in OpenCascade (a revolved paraboloid dish, a
+    /// thickened spherical cap, a box plate tilted 30 degrees, two boxes
+    /// fused into a corner reflector) come back as reflectors.
+    #[test]
+    fn opencascade_sheets_are_fitted() {
+        use crate::sheetfit::Shape;
+        let read = read_step(include_str!("../tests/cad/occ_sheets.step")).unwrap();
+        assert!(read.parts.tubes.is_empty());
+        assert_eq!((read.parts.flat, read.parts.other), (0, 0));
+        let find = |want: &dyn Fn(&Shape) -> bool| {
+            read.sheets
+                .iter()
+                .find(|s| want(&s.shape))
+                .unwrap_or_else(|| panic!("{:#?}", read.sheets))
+        };
+        let near = |a: f64, b: f64, tol: f64| (a - b).abs() <= tol;
+        let dish = find(&|s| matches!(s, Shape::Paraboloid(_)));
+        let Shape::Paraboloid(f) = dish.shape else {
+            unreachable!()
+        };
+        assert!(
+            near(f, 200.0, 0.2) && near(dish.facing[1], 90.0, 0.05),
+            "{dish:?}"
+        );
+        assert!(
+            near(dish.vertex[0], 2000.0, 0.3) && near(dish.vertex[2], -1.0, 0.1),
+            "{dish:?}"
+        );
+        let cap = find(&|s| matches!(s, Shape::Sphere(_)));
+        let Shape::Sphere(r) = cap.shape else {
+            unreachable!()
+        };
+        assert!(
+            near(r, 801.5, 0.5) && near(cap.thickness, 3.0, 0.05),
+            "{cap:?}"
+        );
+        assert!(
+            near(cap.facing[0].abs(), 180.0, 0.05) && near(cap.facing[1], 0.0, 0.05),
+            "{cap:?}"
+        );
+        let plate = find(&|s| matches!(s, Shape::Flat));
+        assert!(
+            near(plate.size[0], 600.0, 0.5) && near(plate.size[1], 400.0, 0.5),
+            "{plate:?}"
+        );
+        assert!(
+            near(plate.thickness, 3.0, 0.15) && near(plate.facing[1], 60.0, 0.01),
+            "{plate:?}"
+        );
+        let corner = find(&|s| matches!(s, Shape::Vee(_)));
+        let Shape::Vee(angle) = corner.shape else {
+            unreachable!()
+        };
+        assert!(
+            near(angle, 90.0, 0.3) && near(corner.facing[0], 45.0, 0.05),
+            "{corner:?}"
+        );
+        assert!(near(corner.thickness, 2.0, 0.1), "{corner:?}");
+    }
+
+    /// Our own export of a reflector as a solid sheet reads back as the
+    /// reflector it was: shape, focal length, place and wire thickness.
+    #[test]
+    fn exported_sheets_come_back_as_reflectors() {
+        use crate::sheetfit::Shape;
+        // A parabolic cylinder (f = 0.3 m) 0.8 x 0.6 m, its aperture 40 mm
+        // off the vertex at x = -0.3, facing +x, 2 mm wire.
+        let mut wires = Vec::new();
+        let at = |i: usize, j: usize| {
+            let u = 0.04 + 0.8 * (i as f64 / 16.0 - 0.5);
+            let v = 0.6 * (j as f64 / 12.0 - 0.5);
+            [-0.3 + u * u / 1.2, u, v]
+        };
+        for i in 0..=16 {
+            for j in 0..=12 {
+                if i < 16 {
+                    wires.push((at(i, j), at(i + 1, j)));
+                }
+                if j < 12 {
+                    wires.push((at(i, j), at(i, j + 1)));
+                }
+            }
+        }
+        let bodies = [
+            Body {
+                name: "element".into(),
+                rods: vec![Rod {
+                    name: "dipole".into(),
+                    a: [0.0, -0.06, 0.0],
+                    b: [0.0, 0.06, 0.0],
+                    radius: 0.001,
+                    inner: None,
+                }],
+                sheets: Vec::new(),
+            },
+            Body {
+                name: "dish1".into(),
+                rods: Vec::new(),
+                sheets: vec![Mesh {
+                    name: "dish1".into(),
+                    wires,
+                    thickness: 0.002,
+                    radius: 0.001,
+                }],
+            },
+        ];
+        let read = read_step(&write(&bodies, "test")).unwrap();
+        assert_eq!(read.parts.tubes.len(), 1);
+        assert_eq!(read.sheets.len(), 1);
+        let fit = read.sheets[0].scaled(0.001);
+        let Shape::ParabolicCylinder(f) = fit.shape else {
+            panic!("{fit:?}")
+        };
+        let near = |a: f64, b: f64, tol: f64| (a - b).abs() <= tol;
+        assert!(near(f, 0.3, 0.0005), "{fit:?}");
+        assert!(
+            near(fit.vertex[0], -0.3, 0.0002) && near(fit.offset[0], 0.04, 0.001),
+            "{fit:?}"
+        );
+        assert!(
+            near(fit.facing[0], 0.0, 0.05) && near(fit.facing[1], 0.0, 0.05),
+            "{fit:?}"
+        );
+        assert!(
+            near(fit.size[0], 0.8, 0.0005) && near(fit.size[1], 0.6, 0.0005),
+            "{fit:?}"
+        );
+        let spec = fit.reflector("dish1", fit.cells(0.05));
+        assert!(near(spec.wire_radius, 0.001, 0.00005), "{spec:?}");
+        assert_eq!(spec.cells, [16, 12]);
+        assert_eq!(spec.facing, [0.0, 0.0]);
+        // It builds into a reflector the deck reads back.
+        let mut deck = crate::deck::Deck::parse("CE
+GE 0
+FR 0 1 0 0 1200
+EN
+");
+        deck.add_reflector(&spec, 1).unwrap();
+        deck.expand().unwrap();
+        let sets = crate::deck::reflectors::reflector_sets(&deck);
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].cells, [16, 12]);
     }
 
     #[test]

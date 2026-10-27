@@ -457,7 +457,13 @@ fn spline(e: &Entity) -> Option<Vec<P3>> {
 }
 
 /// A point on a (rational) B-spline at parameter `t`.
-fn de_boor(t: f64, p: usize, knots: &[f64], control: &[P3], w: &dyn Fn(usize) -> f64) -> P3 {
+pub(crate) fn de_boor(
+    t: f64,
+    p: usize,
+    knots: &[f64],
+    control: &[P3],
+    w: &dyn Fn(usize) -> f64,
+) -> P3 {
     let n = control.len();
     // The knot span holding t (the last span for t at the very end).
     let mut k = p;

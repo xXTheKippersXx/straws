@@ -47,8 +47,9 @@ with a paid certificate; the code is all here to read and build yourself.
 - Make any length, spacing, height or angle a variable with a right-click and
   drag its slider.
 - Add radials, ground grids, plates, corner reflectors and dishes in a click.
-- Import wire-frame drawings (DXF) and solid models' tubes (STEP, STL) from
-  CAD.
+- Import wire-frame drawings (DXF) and solid models from CAD (STEP, STL):
+  tubes become wires, and solid plates, corner reflectors and dishes become
+  editable wire-mesh reflectors.
 - Opens 4nec2 decks, including its symbols, units, current sources, traps and
   insulated wire.
 
