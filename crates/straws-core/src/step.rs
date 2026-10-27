@@ -94,15 +94,27 @@ pub fn bodies(sheet: &Sheet, segments: &[Segment]) -> Vec<Body> {
     }
     out.into_iter()
         .enumerate()
-        .map(|(k, (_, names, rods))| Body {
-            name: match names.as_slice() {
-                [one] => one.clone(),
-                [a, b] => format!("part {}: {a}, {b}", k + 1),
-                [a, b, rest @ ..] => format!("part {}: {a}, {b} and {} more", k + 1, rest.len()),
-                [] => format!("part {}", k + 1),
-            },
-            rods,
-            sheets: Vec::new(),
+        .map(|(k, (_, names, rods))| {
+            // Only names the user gave count ("wire 7" says nothing).
+            let given: Vec<&String> = names
+                .iter()
+                .filter(|n| {
+                    !n.strip_prefix("wire ")
+                        .is_some_and(|t| t.parse::<i64>().is_ok())
+                })
+                .collect();
+            let part = k + 1;
+            let count = names.len();
+            Body {
+                name: match (names.as_slice(), given.as_slice()) {
+                    ([one], _) => one.clone(),
+                    (_, []) => format!("part {part} ({count} wires)"),
+                    (_, [a, b]) if count == 2 => format!("part {part}: {a}, {b}"),
+                    (_, [a, ..]) => format!("part {part}: {a} and {} more wires", count - 1),
+                },
+                rods,
+                sheets: Vec::new(),
+            }
         })
         .collect()
 }
