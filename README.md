@@ -40,8 +40,9 @@ with a paid certificate; the code is all here to read and build yourself.
 **Build antennas**
 - Start from one of 12 templates (dipole, inverted V, end-fed, vertical with
   radials, phased verticals, loop, quad, Yagi, Moxon, log-periodic, helix,
-  J-pole), or draw wires, arcs, circles, helices and spirals in 3D with
-  snapping.
+  J-pole), a proven design from the library (DK7ZB Yagis, a biquad, Cebik's
+  Moxon and more, made for your band), or draw wires, arcs, circles, helices
+  and spirals in 3D with snapping.
 - Type exact numbers in the wire table (m, cm, mm, ft, in or wavelengths), or
   edit the `.nec` text: all views stay in step.
 - Make any length, spacing, height or angle a variable with a right-click and
@@ -87,7 +88,7 @@ with a paid certificate; the code is all here to read and build yourself.
 - Compare designs by snapshot, undo and redo everything.
 - Export a STEP solid model for CAD (each part a separate body, reflectors
   and dishes as solid sheets if you like), CSV, Touchstone, DXF and STL, SVG
-  and PNG images, a report and a build sheet with the cut list.
+  and PNG images, a PDF report and a build sheet with the cut list.
 
 ## Screenshots
 

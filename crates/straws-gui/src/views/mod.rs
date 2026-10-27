@@ -112,7 +112,7 @@ impl egui_dock::TabViewer for TabView<'_> {
             Tab::Notes => notes::ui(ui, self.data),
             Tab::Optimiser => self.views.optimiser.ui(ui, self.data, self.settings),
             Tab::Matching => self.views.matching.ui(ui, self.data, self.settings),
-            Tab::Templates => self.views.templates.ui(ui, self.data),
+            Tab::Templates => self.views.templates.ui(ui, self.data, self.settings),
             Tab::Feedline => feedline::ui(ui, self.data, self.settings),
             Tab::NearField => self.views.near.ui(ui, self.data, self.settings),
             Tab::Curves => empty_note(

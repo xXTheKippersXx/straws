@@ -1742,10 +1742,18 @@ impl App {
             }
         }
         ui.separator();
-        if ui
-            .add_enabled(self.data.model.is_some(), egui::Button::new("Report (web page)…"))
-            .on_hover_text("Key results, plots, wires and the deck on one page; print it to PDF from your browser")
-            .clicked()
+        let pdf_clicked = ui
+            .add_enabled(self.data.model.is_some(), egui::Button::new("Report (PDF)…"))
+            .on_hover_text("Key results, a drawing of the antenna, pattern cuts, SWR and impedance, the wires and the deck, ready to print or send")
+            .clicked();
+        let html_clicked = ui
+            .add_enabled(
+                self.data.model.is_some(),
+                egui::Button::new("Report (web page)…"),
+            )
+            .on_hover_text("The same report as a web page")
+            .clicked();
+        if (pdf_clicked || html_clicked)
             && let Some(m) = &self.data.model
         {
             let comp = straws_core::analysis::pattern::Component::Total;
@@ -1757,9 +1765,10 @@ impl App {
             for (n, v) in &self.data.overrides {
                 deck.set_variable(n, *v);
             }
-            let html = export::report_html(&export::ReportInput {
+            let deck_text = deck.to_text();
+            let input = export::ReportInput {
                 name: &stem,
-                deck_text: &deck.to_text(),
+                deck_text: &deck_text,
                 sweep: sweep.as_ref(),
                 point: point.as_ref(),
                 wires: &m.wires,
@@ -1767,9 +1776,21 @@ impl App {
                 cuts,
                 over_ground: self.data.over_ground,
                 feed: self.data.feed,
-            });
+            };
             ui.close();
-            self.export(html.into_bytes(), &format!("{stem} report.html"), "Web page", "html");
+            if pdf_clicked {
+                let segments: Vec<_> = m.visible_segments().copied().collect();
+                let bytes = straws_core::report::report_pdf(&input, &segments);
+                self.export(bytes, &format!("{stem} report.pdf"), "PDF", "pdf");
+            } else {
+                let html = export::report_html(&input);
+                self.export(
+                    html.into_bytes(),
+                    &format!("{stem} report.html"),
+                    "Web page",
+                    "html",
+                );
+            }
         }
         if ui
             .add_enabled(has_wires, egui::Button::new("Build sheet (web page)…"))

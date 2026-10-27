@@ -442,6 +442,71 @@ fn svg_polar(cut: &Cut, title: &str, upper_half: bool) -> String {
     svg
 }
 
+/// The key figures at the design frequency, as (what, value) rows.
+pub(crate) fn key_figures(r: &ReportInput<'_>) -> Vec<(String, String)> {
+    let mut rows: Vec<(String, String)> = Vec::new();
+    let Some(p) = r.point else {
+        return rows;
+    };
+    let mut row = |k: &str, v: String| rows.push((k.to_string(), v));
+    row("Frequency", format!("{:.4} MHz", p.mhz));
+    if let Some(i) = p.feed(r.feed) {
+        let z: Complex64 = i.impedance;
+        row(
+            "Feed impedance",
+            format!(
+                "{:.2} {} j{:.2} Ω",
+                z.re,
+                if z.im < 0.0 { "−" } else { "+" },
+                z.im.abs()
+            ),
+        );
+        row(
+            &format!("SWR ({} Ω)", r.z0),
+            format!("{:.2}", feed::swr(z, r.z0)),
+        );
+        row(
+            "Return loss",
+            format!("{:.1} dB", feed::return_loss_db(z, r.z0)),
+        );
+    }
+    if let Some(b) = p.power {
+        row("Efficiency", format!("{:.1} %", b.efficiency_percent));
+    }
+    if let Some(g) = &p.pattern {
+        let (max, t, ph) = g.max(Component::Total);
+        row("Peak gain", format!("{max:.2} dBi"));
+        row(
+            "Direction of peak",
+            format!("elevation {:.0}°, azimuth {ph:.0}°", 90.0 - t),
+        );
+    }
+    if let Some((el, az)) = &r.cuts {
+        if let Some(f) = az.figures() {
+            if let Some(bw) = f.beamwidth {
+                row("Azimuth beamwidth (−3 dB)", format!("{bw:.0}°"));
+            }
+            if let Some(fb) = f.front_to_back {
+                row("Front-to-back", format!("{fb:.1} dB"));
+            }
+        }
+        if let Some(f) = el.figures()
+            && let Some(bw) = f.beamwidth
+        {
+            row("Elevation beamwidth (−3 dB)", format!("{bw:.0}°"));
+        }
+    }
+    row(
+        "Ground",
+        if r.over_ground {
+            "over ground".into()
+        } else {
+            "free space".into()
+        },
+    );
+    rows
+}
+
 /// The report as a self-contained web page.
 pub fn report_html(r: &ReportInput<'_>) -> String {
     let feed = r.feed;
@@ -454,75 +519,11 @@ pub fn report_html(r: &ReportInput<'_>) -> String {
          <h1>{0}</h1><p>Report from STRAWS. Print this page to save it as a PDF.</p>",
         esc(r.name)
     );
-    if let Some(p) = r.point {
+    if r.point.is_some() {
         h.push_str("<h2>At the design frequency</h2><table>");
-        let row = |h: &mut String, k: &str, v: String| {
-            let _ = write!(h, "<tr><td>{k}</td><td>{}</td></tr>", esc(&v));
-        };
-        row(&mut h, "Frequency", format!("{:.4} MHz", p.mhz));
-        if let Some(i) = p.feed(feed) {
-            let z: Complex64 = i.impedance;
-            row(
-                &mut h,
-                "Feed impedance",
-                format!(
-                    "{:.2} {} j{:.2} Ω",
-                    z.re,
-                    if z.im < 0.0 { "−" } else { "+" },
-                    z.im.abs()
-                ),
-            );
-            row(
-                &mut h,
-                &format!("SWR ({} Ω)", r.z0),
-                format!("{:.2}", feed::swr(z, r.z0)),
-            );
-            row(
-                &mut h,
-                "Return loss",
-                format!("{:.1} dB", feed::return_loss_db(z, r.z0)),
-            );
+        for (k, v) in key_figures(r) {
+            let _ = write!(h, "<tr><td>{}</td><td>{}</td></tr>", esc(&k), esc(&v));
         }
-        if let Some(b) = p.power {
-            row(
-                &mut h,
-                "Efficiency",
-                format!("{:.1} %", b.efficiency_percent),
-            );
-        }
-        if let Some(g) = &p.pattern {
-            let (max, t, ph) = g.max(Component::Total);
-            row(&mut h, "Peak gain", format!("{max:.2} dBi"));
-            row(
-                &mut h,
-                "Direction of peak",
-                format!("elevation {:.0}°, azimuth {ph:.0}°", 90.0 - t),
-            );
-        }
-        if let Some((el, az)) = &r.cuts {
-            if let Some(f) = az.figures() {
-                if let Some(bw) = f.beamwidth {
-                    row(&mut h, "Azimuth beamwidth (−3 dB)", format!("{bw:.0}°"));
-                }
-                if let Some(fb) = f.front_to_back {
-                    row(&mut h, "Front-to-back", format!("{fb:.1} dB"));
-                }
-            }
-            if let Some(f) = el.figures()
-                && let Some(bw) = f.beamwidth
-            {
-                row(&mut h, "Elevation beamwidth (−3 dB)", format!("{bw:.0}°"));
-            }
-        }
-        row(
-            &mut h,
-            "Ground",
-            if r.over_ground {
-                "over ground".into()
-            } else {
-                "free space".into()
-            },
-        );
         h.push_str("</table>");
         if let Some((el, az)) = &r.cuts {
             h.push_str("<div>");

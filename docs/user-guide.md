@@ -10,6 +10,16 @@ With nothing open, the 3D model view offers three ways in:
   design frequency, wire diameter, ground, height and the template's own
   settings (in wavelengths, with metres shown), then *Create this antenna*.
   Every dimension becomes a variable you can tune.
+- **Start from a proven design**: the Templates view's *Design library* page
+  has published designs (DK7ZB's 2 m Yagis, Trevor Marshall's biquad,
+  Cebik's Moxon, the ARRL quad, the classic ground plane) with who designed
+  them, what they published, where the dimensions come from and how to build
+  them. *Make it for* a frequency or a band: a published design is scaled
+  whole, its element diameter too, so it behaves exactly like the original
+  (each dimension is a variable with the published value noted beside it);
+  formula designs are worked out for your frequency and wire. *Create this
+  antenna* also sets the SWR's reference impedance to the one the design is
+  fed at (28 Ω for DK7ZB's 28 Ω Yagis).
 - **Draw a new antenna**: an empty model in free space at 14.2 MHz. Choose
   *Draw* in the 3D model view and click to place wire ends; each click starts
   the next wire from the last end. Esc or right-click stops. *Front*, *Side* and
@@ -469,8 +479,10 @@ joined wire ends too* in the prompt if you don't want that).
 - File > Export: CSV of the sweep, the pattern or the currents (for
   spreadsheets, Octave or MATLAB), Touchstone `.s1p`, DXF of the wires or STL
   of them as solid tubes for 3D printing, a STEP solid model for CAD (see
-  below), a report page (open it in
-  a browser and print to PDF), SVG images of the SWR plot, Smith chart or
+  below), a **PDF report** (key figures, a
+  drawing of the antenna, the pattern cuts, SWR, resistance and reactance
+  across the sweep, the wires and the deck; generated meshes, radials and
+  curves are summed up in a line each) or the same report as a web page, SVG images of the SWR plot, Smith chart or
   pattern cuts (for documents and slides), or a PNG screenshot of the whole
   window or of any one view on screen.
 - File > Export > **Solid model (STEP)** writes the antenna for CAD programs

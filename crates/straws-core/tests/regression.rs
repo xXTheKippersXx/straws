@@ -704,12 +704,31 @@ fn sample_report() {
         ground: t.ground,
         height_wl: t.height_wl,
     };
-    let text = t.deck(&common, &t.defaults());
+    // STRAWS_REPORT_DECK and STRAWS_REPORT_MHZ pick another antenna.
+    let (name, text, mhz) = match std::env::var("STRAWS_REPORT_DECK") {
+        Ok(path) => (
+            std::path::Path::new(&path)
+                .file_stem()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            std::fs::read_to_string(&path).unwrap(),
+            std::env::var("STRAWS_REPORT_MHZ")
+                .unwrap()
+                .parse::<f64>()
+                .unwrap(),
+        ),
+        Err(_) => (
+            "Moxon for 14.2 MHz".to_string(),
+            t.deck(&common, &t.defaults()),
+            14.2,
+        ),
+    };
     let parsed = Deck::parse(&text);
     let deck = parsed.expand().unwrap();
     let plan = FrequencyPlan {
-        start_mhz: 13.9,
-        stop_mhz: 14.5,
+        start_mhz: mhz * 0.98,
+        stop_mhz: mhz * 1.02,
         points: 25,
     };
     let out = engine()
@@ -723,7 +742,7 @@ fn sample_report() {
         .run(
             &run_deck(
                 &deck,
-                &FrequencyPlan::single(14.2),
+                &FrequencyPlan::single(mhz),
                 Some(PatternRequest::new(2.0)),
             ),
             &CancelToken::new(),
@@ -737,19 +756,23 @@ fn sample_report() {
         g.azimuth_cut(Component::Total, 90.0 - th),
     ));
     let wires = straws_core::deck::edit::wires(&parsed, &deck);
-    let html = report_html(&ReportInput {
-        name: "Moxon for 14.2 MHz",
+    let input = ReportInput {
+        name: &name,
         deck_text: &text,
         sweep: Some(&sweep),
         point: Some(&point),
         wires: &wires,
         z0: 50.0,
         cuts,
-        over_ground: true,
+        over_ground: deck.cards.iter().any(|c| c.is("GN") && c.ints[0] != -1),
         feed: 0,
-    });
+    };
     let path = std::env::temp_dir().join("straws-sample-report.html");
-    std::fs::write(&path, html).unwrap();
+    std::fs::write(&path, report_html(&input)).unwrap();
+    println!("wrote {}", path.display());
+    let pdf = straws_core::report::report_pdf(&input, &one.segments);
+    let path = std::env::temp_dir().join("straws-sample-report.pdf");
+    std::fs::write(&path, pdf).unwrap();
     println!("wrote {}", path.display());
 }
 
@@ -2706,6 +2729,79 @@ fn step_export_keeps_parts_apart_and_in_place() {
                 && ((near(t.a, a) && near(t.b, b)) || (near(t.a, b) && near(t.b, a)))),
             "tag {}",
             w.tag
+        );
+    }
+}
+
+/// Each design in the library does what its designer published (gain,
+/// front-to-back, feed impedance), at its own frequency and made for
+/// another band.
+#[test]
+fn library_designs_do_what_they_say() {
+    use straws_core::analysis::pattern::{Component, PatternGrid};
+    use straws_core::analysis::plan::{FrequencyPlan, PatternRequest, run_deck};
+    use straws_core::library::LIBRARY;
+    let figures = |text: &str, mhz: f64| {
+        let n = Deck::parse(text).expand().unwrap();
+        let out = engine()
+            .run(
+                &run_deck(
+                    &n,
+                    &FrequencyPlan::single(mhz),
+                    Some(PatternRequest::new(2.0)),
+                ),
+                &CancelToken::new(),
+            )
+            .unwrap();
+        let f = &out.frequencies[0];
+        let z = f.inputs[0].impedance;
+        let g = PatternGrid::from_table(&f.patterns[0]).unwrap();
+        let (peak, th, ph) = g.max(Component::Total);
+        let az = g.azimuth_cut(Component::Total, 90.0 - th);
+        let fb = az
+            .figures()
+            .and_then(|c| c.front_to_back)
+            .unwrap_or(f64::NAN);
+        (z, peak, fb, th, ph)
+    };
+    // (name starts, published gain dBi and tolerance, least F/B dB, feed
+    // resistance and tolerance, largest |reactance|)
+    let checks: [(&str, f64, f64, f64, f64, f64, f64); 7] = [
+        ("DK7ZB 3", 8.5, 0.3, 15.0, 28.0, 3.0, 6.0),
+        ("DK7ZB 5", 11.1, 0.3, 19.5, 28.0, 4.0, 8.0),
+        ("DK7ZB 6", 11.6, 0.3, 30.0, 40.0, 4.0, 4.0),
+        ("Biquad", 10.5, 1.0, 15.0, 60.0, 15.0, 20.0),
+        ("Moxon", 6.0, 0.5, 20.0, 50.0, 6.0, 8.0),
+        ("Two-element", 7.5, 0.6, 10.0, 80.0, 10.0, 45.0),
+        ("Quarter-wave", 2.0, 0.5, -1.0, 52.0, 5.0, 5.0),
+    ];
+    for d in LIBRARY {
+        let (z, peak, fb, th, ph) = figures(&d.deck(d.mhz(), 2.0), d.mhz());
+        println!(
+            "{}: {:.3} MHz Z {:.1} {:+.1}j, peak {peak:.2} dBi at theta {th} phi {ph}, F/B {fb:.1} dB",
+            d.name,
+            d.mhz(),
+            z.re,
+            z.im
+        );
+        let (_, gain, tol, least_fb, r, rtol, xmax) = checks
+            .iter()
+            .find(|c| d.name.starts_with(c.0))
+            .copied()
+            .unwrap_or_else(|| panic!("no check for {}", d.name));
+        assert!((peak - gain).abs() <= tol, "{}: {peak} dBi", d.name);
+        assert!(least_fb < 0.0 || fb >= least_fb, "{}: F/B {fb}", d.name);
+        assert!(
+            (z.re - r).abs() <= rtol && z.im.abs() <= xmax,
+            "{}: {z}",
+            d.name
+        );
+        // Made for a third of the frequency: the same antenna, scaled.
+        let (z3, peak3, ..) = figures(&d.deck(d.mhz() / 3.0, 2.0 * 3.0), d.mhz() / 3.0);
+        assert!(
+            (z3 - z).norm() < 0.05 * z.norm() && (peak3 - peak).abs() < 0.05,
+            "{}: {z3} {peak3}",
+            d.name
         );
     }
 }

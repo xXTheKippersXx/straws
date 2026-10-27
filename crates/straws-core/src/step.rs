@@ -901,7 +901,7 @@ fn text(s: &str) -> String {
 }
 
 /// Now in UTC as an ISO 8601 date and time.
-fn timestamp() -> String {
+pub(crate) fn timestamp() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs()) as i64;
@@ -2974,11 +2974,13 @@ END-ISO-10303-21;
         assert_eq!(spec.cells, [16, 12]);
         assert_eq!(spec.facing, [0.0, 0.0]);
         // It builds into a reflector the deck reads back.
-        let mut deck = crate::deck::Deck::parse("CE
+        let mut deck = crate::deck::Deck::parse(
+            "CE
 GE 0
 FR 0 1 0 0 1200
 EN
-");
+",
+        );
         deck.add_reflector(&spec, 1).unwrap();
         deck.expand().unwrap();
         let sets = crate::deck::reflectors::reflector_sets(&deck);
