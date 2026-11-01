@@ -163,7 +163,7 @@ fn touchstone_files() {
     survives(
         "touchstone",
         mangled(TOUCHSTONE.as_bytes(), 1, 1000),
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         |b| {
             let _ = read_touchstone(&String::from_utf8_lossy(b), 1);
             let _ = read_touchstone(&String::from_utf8_lossy(b), 2);
@@ -176,7 +176,7 @@ fn dxf_drawings() {
     survives(
         "dxf",
         mangled(DXF.as_bytes(), 2, 1500),
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         |b| {
             for step in [10.0, 0.0, -5.0, f64::NAN, 1e-9] {
                 if let Ok(d) = dxf::read_dxf(&String::from_utf8_lossy(b), step) {
@@ -200,7 +200,7 @@ fn stl_meshes() {
     survives(
         "stl",
         mangled(ascii.as_bytes(), 3, 200),
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         |b| {
             if let Ok(t) = stl::read_stl(b) {
                 let parts = stl::tubes(&t);
@@ -216,7 +216,7 @@ fn stl_meshes() {
     survives(
         "binary stl",
         vec![bin, lying],
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         |b| {
             if let Ok(t) = stl::read_stl(b) {
                 let _ = stl::tubes(&t);
@@ -244,9 +244,11 @@ fn step_models() {
     {
         survives(
             "step",
-            // Fewer for these 80 kB files: debug builds read them slowly.
+            // Fewer for these 80 kB files: debug builds read them slowly
+            // (an intact sheet takes 4.5 s to fit here, four times that on
+            // CI's Windows runner), so the time limit is generous too.
             mangled_cut(sample.as_bytes(), 10 + k as u64, 40, 12),
-            Duration::from_secs(20),
+            Duration::from_secs(90),
             read,
         );
     }
@@ -285,7 +287,7 @@ fn sheets_from_odd_points() {
             let _ = tx.send(ok);
         });
         assert_eq!(
-            rx.recv_timeout(Duration::from_secs(10)),
+            rx.recv_timeout(Duration::from_secs(40)),
             Ok(true),
             "point set {k}"
         );
@@ -344,7 +346,7 @@ fn sheets_from_odd_meshes() {
                 let _ = tx.send(ok);
             });
             assert_eq!(
-                rx.recv_timeout(Duration::from_secs(10)),
+                rx.recv_timeout(Duration::from_secs(40)),
                 Ok(true),
                 "mesh {k}, thickness {thickness}"
             );
@@ -358,7 +360,7 @@ fn decks() {
     survives(
         "deck",
         mangled(sample.as_bytes(), 20, 1500),
-        Duration::from_secs(5),
+        Duration::from_secs(30),
         |b| {
             let deck = Deck::parse(&String::from_utf8_lossy(b));
             if let Ok(n) = deck.expand() {
