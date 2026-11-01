@@ -31,7 +31,9 @@
 #include "shared.h"
 
 /* signal handler */
+#ifndef __wasi__
 static void sig_handler( int signal );
+#endif
 
 /*-------------------------------------------------------------------*/
 
@@ -86,7 +88,9 @@ int main( int argc, char **argv )
   int option;
 
   /*** signal handler related code ***/
-#ifdef _WIN32
+#if defined( __wasi__ )
+  /* straws: WASI has no signals */
+#elif defined( _WIN32 )
   /* straws: Windows has no sigaction(); use signal() instead */
   signal( SIGINT,  sig_handler );
   signal( SIGSEGV, sig_handler );
@@ -1965,11 +1969,14 @@ int straws_current_record( FILE *fp, int i, complex double curi, int *rows )
 }
 
 /* straws: persistent workers. */
+#ifndef __wasi__
 jmp_buf straws_jmp;
+#endif
 int straws_persistent = FALSE;
 int straws_run_count = 0;
 const char *straws_binary_path = NULL;
 
+#ifndef __wasi__
 /* Runs one deck (argv as for main()) and comes back, whether it finished
  * or stopped with an error: returns the exit code a process would have
  * had. stderr goes to stderr_path for the run; binary_path is the binary
@@ -2003,6 +2010,8 @@ int straws_run( int argc, char **argv, const char *stderr_path,
   straws_reset();
   return( code );
 }
+
+#endif
 
 /* Frees every global buffer and zeroes every global, as in a fresh
  * process (where they start zeroed). The per-thread ones are this
@@ -2149,6 +2158,7 @@ void prnt( int in1, int in2, int in3, double fl1, double fl2,
 
 /*-----------------------------------------------------------------------*/
 
+#ifndef __wasi__
 static void sig_handler( int signal )
 {
   fprintf( stderr, "\n" );
@@ -2177,6 +2187,7 @@ static void sig_handler( int signal )
   }
 
 } /* end of sig_handler() */
+#endif
 
 /*------------------------------------------------------------------------*/
 

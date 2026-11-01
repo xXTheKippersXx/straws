@@ -143,7 +143,12 @@ impl Deck {
     /// older Windows files.
     pub fn from_file(path: impl AsRef<Path>) -> std::io::Result<Deck> {
         let bytes = std::fs::read(path)?;
-        Ok(Deck::parse(&decode(&bytes)))
+        Ok(Deck::from_bytes(&bytes))
+    }
+
+    /// Reads a deck from a file's bytes (UTF-8, or Latin-1 as above).
+    pub fn from_bytes(bytes: &[u8]) -> Deck {
+        Deck::parse(&decode(bytes))
     }
 
     /// Splits deck text into lines. Never fails: problems in the content

@@ -90,6 +90,11 @@ Every change to the C source is marked with a `straws:` comment.
    wavelengths, real and imaginary current; `straws_current_record()`), marked in the text by
    `STRAWS BINARY CURRENTS n SEGMENTS`. The short receiving-pattern forms stay text.
 
+14. **WebAssembly (`main.c`, `misc.c`, `nec2c.h`).** Under WASI (`__wasi__`, the browser
+   version's engine) there are no signals and no `setjmp`/`longjmp`, so the signal handlers and
+   the persistent mode (`straws_run()`, the jump in `stop()`) are left out: each deck runs in a
+   fresh WebAssembly instance and ends with `exit()`, which only ends that instance.
+
 Not changed in the C, but handled by the deck reader: a second field on the `GE` card made nec2c
 write to a plot file that wasn't open and crash, so the reader drops that field (it isn't part of
 NEC-2).
@@ -98,6 +103,9 @@ Build-time changes (in `../build.rs`, no source edits):
 
 - `main` is renamed to `nec2c_main` (`-Dmain=nec2c_main`) so a worker process can call it.
 - The engine is always compiled with optimisation, even in debug builds of the app.
+- For `wasm32-wasip1` (the browser version) it is compiled with wasi-sdk's clang
+  (`WASI_SDK_PATH`), with WASI's emulations of `times()` and `getpid()`. For the browser app
+  itself (`wasm32-unknown-unknown`) it isn't compiled at all.
 - On Windows it is compiled with clang-cl, because Microsoft's C compiler has no C99 complex
   numbers. `compat/win/` supplies what the Windows C runtime lacks: `<complex.h>` (written for
   clang's native `_Complex` type), `<unistd.h>` and `<sys/times.h>` stand-ins, `getopt()`, and

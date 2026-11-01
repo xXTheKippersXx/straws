@@ -3,7 +3,9 @@
 
 #include <complex.h>
 #include <stdio.h>
+#ifndef __wasi__
 #include <signal.h>
+#endif
 #include <math.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -547,16 +549,22 @@ void saoa(double t, complex double *ans);
  * deck after deck in one process: stop() jumps back to straws_run()
  * instead of exiting, and straws_reset() puts every global back as a
  * fresh process has it. */
-#include <setjmp.h>
 #define STRAWS_JMP_BASE 1024
+/* straws: WebAssembly (WASI) builds run each deck in a fresh instance,
+ * so they have no persistent mode and no setjmp/longjmp. */
+#ifndef __wasi__
+#include <setjmp.h>
 extern jmp_buf straws_jmp;
+#endif
 extern int straws_persistent;
 /* Bumped for every run, so per-thread caches know to start again. */
 extern int straws_run_count;
 /* This run's binary pattern file (NULL: STRAWS_BINARY_PATTERN, if set). */
 extern const char *straws_binary_path;
+#ifndef __wasi__
 int straws_run(int argc, char **argv, const char *stderr_path,
 	const char *binary_path);
+#endif
 void straws_reset(void);
 void rdpat_finish(void);
 FILE *straws_binary_file(void);

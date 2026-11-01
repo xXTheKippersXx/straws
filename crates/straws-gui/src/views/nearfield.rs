@@ -1,11 +1,11 @@
 //! Near fields: the electric field on a plane near the antenna as a heat
 //! map, scaled to the transmitter power, with a rough RF exposure guide.
 
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::mpsc::Receiver;
 
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Stroke, pos2, vec2};
 use straws_core::analysis::nearfield::{Grid, Plane, icnirp_public_e, near_field_deck};
-use straws_core::engine::{CancelToken, Engine};
+use straws_core::engine::CancelToken;
 use straws_core::output::NearField;
 
 use crate::app::{Data, Settings};
@@ -175,25 +175,15 @@ impl NearFieldView {
             };
             let deck = near_field_deck(numeric, mhz, &grid);
             let cancel = CancelToken::new();
-            let c = cancel.clone();
-            let (tx, rx) = channel();
-            let ctx = ui.ctx().clone();
-            std::thread::spawn(move || {
-                let r = Engine::self_hosted()
-                    .map_err(|e| e.to_string())
-                    .and_then(|e| e.run(&deck, &c).map_err(|e| e.to_string()))
-                    .and_then(|out| {
-                        let f = out.frequencies.into_iter().next().ok_or("no result")?;
-                        let input_power = f.inputs.iter().map(|i| i.power).sum();
-                        Ok(Result {
-                            grid,
-                            mhz,
-                            points: f.near_e,
-                            input_power,
-                        })
-                    });
-                let _ = tx.send(r);
-                ctx.request_repaint();
+            let rx = crate::compute::run_once(ui.ctx(), &deck, cancel.clone(), move |out| {
+                let f = out.frequencies.into_iter().next().ok_or("no result")?;
+                let input_power = f.inputs.iter().map(|i| i.power).sum();
+                Ok(Result {
+                    grid,
+                    mhz,
+                    points: f.near_e,
+                    input_power,
+                })
             });
             self.job = Some((cancel, rx));
         }

@@ -16,7 +16,6 @@ straws-core = { path = "../straws-core" }
 eframe = { version = "0.36", features = ["persistence"] }
 egui_dock = { version = "0.21", features = ["serde"] }
 egui_plot = "0.37"
-rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
 bytemuck = { version = "1", features = ["derive"] }
 glam = { version = "0.34", features = ["bytemuck"] }
@@ -24,6 +23,37 @@ glam = { version = "0.34", features = ["bytemuck"] }
 png = "0.18"
 # Already built as part of eframe (its settings file); used for project files.
 ron = "0.12"
+
+# Time that works in browsers too (egui already builds it).
+web-time = "1"
+
+# The browser version (see web/README.md).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Blob",
+    "BlobPropertyBag",
+    "Document",
+    "Element",
+    "File",
+    "FileList",
+    "HtmlAnchorElement",
+    "HtmlCanvasElement",
+    "HtmlElement",
+    "HtmlInputElement",
+    "Location",
+    "MessageEvent",
+    "Navigator",
+    "Url",
+    "Window",
+    "Worker",
+    "WorkerOptions",
+] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = "0.17"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

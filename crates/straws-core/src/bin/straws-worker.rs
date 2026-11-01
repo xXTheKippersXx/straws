@@ -3,6 +3,7 @@
 //! Used by the test suite and handy for running nec2c directly.
 
 fn main() {
+    #[cfg(not(target_os = "wasi"))]
     if std::env::args_os().nth(1).as_deref() == Some(straws_core::worker::SERVER_FLAG.as_ref()) {
         straws_core::worker::serve();
         return;

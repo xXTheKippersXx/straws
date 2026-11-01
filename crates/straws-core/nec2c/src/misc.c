@@ -104,8 +104,10 @@ int stop( int flag )
   /* straws: in a persistent worker, back to straws_run() instead of
    * ending the process (the value is never 0, which setjmp keeps for its
    * first return). */
+#ifndef __wasi__
   if( straws_persistent )
 	longjmp( straws_jmp, flag + STRAWS_JMP_BASE );
+#endif
 
   exit( flag );
 }

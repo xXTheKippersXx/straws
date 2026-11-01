@@ -694,30 +694,45 @@ impl Job {
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .unwrap_or_default();
         let elapsed = self.started.elapsed();
-        if code == Some(0) {
-            let binary = std::fs::read(self.dir.path().join("deck.pat")).unwrap_or_default();
-            return Ok(RawRun {
-                text,
-                elapsed,
-                binary,
-            });
-        }
-        let mut messages = Vec::new();
-        if let Ok(stderr) = std::fs::read_to_string(self.dir.path().join("stderr.txt")) {
-            messages.extend(
-                stderr
-                    .lines()
-                    .map(str::trim)
-                    .filter(|l| !l.is_empty())
-                    .map(String::from),
-            );
-        }
-        messages.extend(engine_error_lines(&text));
-        Err(EngineError::Failed {
-            exit_code: code,
-            messages,
-        })
+        let binary = if code == Some(0) {
+            std::fs::read(self.dir.path().join("deck.pat")).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let stderr =
+            std::fs::read_to_string(self.dir.path().join("stderr.txt")).unwrap_or_default();
+        finish_run(code, text, &stderr, binary, elapsed)
     }
+}
+
+/// Turns a finished run (exit code, output text, what it wrote to stderr,
+/// the binary results file) into its result, the same way for workers here
+/// and engines run elsewhere (the browser app's Web Workers).
+pub fn finish_run(
+    code: Option<i32>,
+    text: String,
+    stderr: &str,
+    binary: Vec<u8>,
+    elapsed: Duration,
+) -> Result<RawRun, EngineError> {
+    if code == Some(0) {
+        return Ok(RawRun {
+            text,
+            elapsed,
+            binary,
+        });
+    }
+    let mut messages: Vec<String> = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect();
+    messages.extend(engine_error_lines(&text));
+    Err(EngineError::Failed {
+        exit_code: code,
+        messages,
+    })
 }
 
 impl Drop for Job {

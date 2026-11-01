@@ -56,7 +56,10 @@ fn threads() -> usize {
 fn factor_par() -> Par {
     match threads() {
         1 => Par::Seq,
+        #[cfg(not(target_arch = "wasm32"))]
         n => Par::rayon(n),
+        #[cfg(target_arch = "wasm32")]
+        _ => Par::Seq,
     }
 }
 

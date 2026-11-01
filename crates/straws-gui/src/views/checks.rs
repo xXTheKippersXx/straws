@@ -136,6 +136,8 @@ impl ChecksView {
                     self.job = None;
                     self.result = None;
                 }
+            } else if crate::files::WEB {
+                crate::views::desktop_only(ui);
             } else if ui
                 .button("Run the check")
                 .on_hover_text(format!(
@@ -319,6 +321,8 @@ impl ChecksView {
                     self.tolerance_job = None;
                     self.tolerance = None;
                 }
+            } else if crate::files::WEB {
+                crate::views::desktop_only(ui);
             } else if ui
                 .button("Run")
                 .on_hover_text(format!(
@@ -540,6 +544,8 @@ impl ChecksView {
                     self.trim_job = None;
                     self.trims = None;
                 }
+            } else if crate::files::WEB {
+                crate::views::desktop_only(ui);
             } else if ui
                 .button("Run")
                 .on_hover_text(format!("At {:.4} MHz, one run per wire", data.mhz))

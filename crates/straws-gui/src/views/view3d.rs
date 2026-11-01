@@ -1510,7 +1510,8 @@ fn welcome(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
         {
             data.request = Some(Request::OpenDialog);
         }
-        if !settings.recent.is_empty() {
+        // A browser can't open files from disk by itself.
+        if !settings.recent.is_empty() && !crate::files::WEB {
             ui.add_space(14.0);
             ui.label(egui::RichText::new("Recent").weak());
             for p in settings.recent.iter().take(6) {

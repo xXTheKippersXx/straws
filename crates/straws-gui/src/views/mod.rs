@@ -134,3 +134,9 @@ pub fn empty_note(ui: &mut egui::Ui, text: &str) {
         ui.label(egui::RichText::new(text).color(ui.visuals().weak_text_color()));
     });
 }
+
+/// In the browser version, in place of a button for work it can't do yet.
+pub fn desktop_only(ui: &mut egui::Ui) {
+    ui.label(egui::RichText::new("Needs the desktop app").weak())
+        .on_hover_text(crate::compute::DESKTOP_ONLY);
+}

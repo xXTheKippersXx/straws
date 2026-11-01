@@ -11,6 +11,7 @@
 </p>
 
 <p align="center">
+  <a href="https://xxthekippersxx.github.io/straws/">Use it in your browser</a> ·
   <a href="https://github.com/xXTheKippersXx/straws/releases">Download</a> ·
   <a href="docs/user-guide.md">User guide</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -34,6 +35,12 @@ Get the latest version from the
 
 The warnings on Windows and macOS appear because the downloads aren't signed
 with a paid certificate; the code is all here to read and build yourself.
+
+**No install?** [Open STRAWS in your browser](https://xxthekippersxx.github.io/straws/)
+(any recent Chrome, Edge, Firefox or Safari). It's the same app with the same
+engine; your files stay on your computer. The optimiser and the convergence,
+tolerance and sensitivity checks need the desktop app, which is also several
+times faster. See [web/README.md](web/README.md).
 
 ## What it does
 

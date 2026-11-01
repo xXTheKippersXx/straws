@@ -2,7 +2,8 @@
 //! the goals, and a live run that shows the best design so far.
 
 use std::sync::mpsc::{Receiver, channel};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use eframe::egui::{self, RichText};
 use egui_plot::{Line, Plot, PlotPoints};
@@ -188,6 +189,13 @@ impl OptimiserView {
         let Some(model) = &data.model else {
             return empty_note(ui, "Open a model to optimise it.");
         };
+        if crate::files::WEB {
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                "The optimiser needs the desktop app: you can set it up here and save it in a                  project, but not run it in the browser.",
+            )
+            .on_hover_text(crate::compute::DESKTOP_ONLY);
+        }
         // Keep the variable list in step with the deck.
         // Variables marked "fixed" in the Variables view are left alone.
         let values: Vec<(String, f64, Option<Range>)> = model
@@ -661,6 +669,8 @@ impl OptimiserView {
                     {
                         r.cancel.cancel();
                     }
+                } else if crate::files::WEB {
+                    crate::views::desktop_only(ui);
                 } else {
                     start = ui
                         .add_enabled(can_start, egui::Button::new("Start"))

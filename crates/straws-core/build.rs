@@ -27,6 +27,15 @@ const SOURCES: &[&str] = &[
 fn main() {
     println!("cargo:rerun-if-changed=nec2c");
     println!("cargo:rerun-if-env-changed=NEC_CLANG_CL");
+    println!("cargo:rerun-if-env-changed=WASI_SDK_PATH");
+
+    // The browser app (wasm32-unknown-unknown) has no C library: there the
+    // engine is a separate WebAssembly worker, built for wasm32-wasip1.
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if arch == "wasm32" && os != "wasi" {
+        return;
+    }
 
     let src = Path::new("nec2c/src");
     let mut build = cc::Build::new();
@@ -53,6 +62,42 @@ fn main() {
             // nec2c's own min() function.
             .define("_CRT_DECLARE_NONSTDC_NAMES", "0")
             .define("_USE_MATH_DEFINES", None);
+    }
+
+    if os == "wasi" {
+        // WebAssembly worker for the browser app: compiled with wasi-sdk's
+        // clang against its C library (WASI_SDK_PATH, see web/README.md).
+        let sdk = PathBuf::from(env::var_os("WASI_SDK_PATH").expect(
+            "
+
+Set WASI_SDK_PATH to a wasi-sdk folder to build the WebAssembly engine.
+
+",
+        ));
+        let clang = sdk
+            .join("bin")
+            .join(if cfg!(windows) { "clang.exe" } else { "clang" });
+        build
+            .compiler(clang)
+            .flag(format!(
+                "--sysroot={}",
+                sdk.join("share/wasi-sysroot").display()
+            ))
+            .flag("--target=wasm32-wasip1")
+            // nec2c times its stages with times() and names temporary
+            // files with getpid(); WASI emulates both.
+            .define("_WASI_EMULATED_PROCESS_CLOCKS", None)
+            .define("_WASI_EMULATED_GETPID", None);
+        // Only these two libraries are taken from wasi-sdk (copied apart):
+        // Rust brings its own C library, which must stay the one linked.
+        let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+        let lib = sdk.join("share/wasi-sysroot/lib/wasm32-wasip1");
+        for name in ["wasi-emulated-process-clocks", "wasi-emulated-getpid"] {
+            let file = format!("lib{name}.a");
+            std::fs::copy(lib.join(&file), out.join(&file)).expect("wasi-sdk's emulation library");
+            println!("cargo:rustc-link-lib=static={name}");
+        }
+        println!("cargo:rustc-link-search=native={}", out.display());
     }
 
     build.compile("nec2c");

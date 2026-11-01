@@ -9,6 +9,12 @@ license.workspace = true
 
 [dependencies]
 num-complex = "0.4"
+# The clock, in browsers too (the GUI already builds it).
+web-time = "1"
+faer = { version = "0.24", default-features = false, features = ["std"] }
+
+# Multi-threaded LU everywhere except WebAssembly (no threads there).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 faer = { version = "0.24", default-features = false, features = ["std", "rayon"] }
 
 [build-dependencies]

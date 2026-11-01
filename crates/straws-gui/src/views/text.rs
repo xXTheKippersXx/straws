@@ -1,6 +1,7 @@
 //! The deck text and the messages list.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use eframe::egui::{self, RichText};
 use straws_core::deck::Deck;

@@ -504,6 +504,21 @@ joined wire ends too* in the prompt if you don't want that).
   every piece. Lengths are the conductors as modelled: add overlaps at tube
   joints, clamps, insulators and the feed hardware yourself.
 
+## In a browser
+[STRAWS also runs in a browser](https://xxthekippersxx.github.io/straws/),
+with nothing to install: handy on a computer where you can't install
+programs. It's the same app and the same engine, with a few differences:
+
+- Opening a file reads it into the page, and saving one downloads it (to
+  your Downloads folder, or wherever the browser asks). Nothing is sent
+  anywhere. There's no Open recent, since a page can't reopen files from
+  your disk by itself; drop a file on the window to open it.
+- The optimiser, the convergence, tolerance and sensitivity checks and the
+  estimate for radials on or under the ground say "Needs the desktop app".
+- It's slower: the engine runs about three times slower, so big models and
+  long sweeps take longer than on the desktop.
+- Settings and the panel layout are kept by the browser, for that browser.
+
 ## Limits
 NEC-2 models thin wires and simple surface patches. It can't model dielectrics
 or solid structures (patch antennas, horns), and wires should be much thinner

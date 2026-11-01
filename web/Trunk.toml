@@ -1,0 +1,7 @@
+# trunk settings for the browser version (run web/build.sh).
+[build]
+target = "index.html"
+dist = "dist"
+# Relative links, so the site works from any folder (GitHub Pages serves it
+# from /straws/).
+public_url = "./"

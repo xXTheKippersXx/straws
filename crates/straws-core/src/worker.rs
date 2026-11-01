@@ -30,7 +30,9 @@ pub const SERVER_FLAG: &str = "--nec2c-server";
 pub const WORKER_ENV: &str = "STRAWS_WORKER";
 
 unsafe extern "C" {
-    /// nec2c's run-and-return entry (main.c, straws: persistent workers).
+    /// nec2c's run-and-return entry (not in WebAssembly builds, which run
+    /// each deck in a fresh instance) (main.c, straws: persistent workers).
+    #[cfg(not(target_os = "wasi"))]
     fn straws_run(
         argc: c_int,
         argv: *mut *mut c_char,
@@ -48,6 +50,7 @@ pub fn run_if_worker() {
     let mut args = std::env::args_os();
     let _program = args.next();
     let flag = args.next();
+    #[cfg(not(target_os = "wasi"))]
     if flag.as_deref() == Some(SERVER_FLAG.as_ref()) {
         serve();
         std::process::exit(0);
@@ -60,6 +63,7 @@ pub fn run_if_worker() {
 }
 
 /// The persistent worker's loop (see [`SERVER_FLAG`]).
+#[cfg(not(target_os = "wasi"))]
 pub fn serve() {
     use std::io::{BufRead, Write};
     keep_rust_symbols();

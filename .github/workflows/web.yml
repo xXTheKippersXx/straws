@@ -1,0 +1,60 @@
+name: Web
+
+# Builds the browser version (web/) and puts it on GitHub Pages.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a newer push replaces one still waiting.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  build:
+    name: Build the browser version
+    # Only the public repo has GitHub Pages (and free Actions minutes).
+    if: github.repository == 'xXTheKippersXx/straws'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Rust's WebAssembly targets
+        run: rustup target add wasm32-unknown-unknown wasm32-wasip1
+      - name: wasi-sdk (compiles the C engine to WebAssembly)
+        run: |
+          curl -sSfL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz | tar xz -C "$HOME"
+          echo "WASI_SDK_PATH=$HOME/wasi-sdk-34.0-x86_64-linux" >> "$GITHUB_ENV"
+      - name: trunk
+        run: |
+          curl -sSfL https://github.com/trunk-rs/trunk/releases/download/v0.22.1/trunk-x86_64-unknown-linux-gnu.tar.gz | tar xz -C "$HOME"
+          echo "$HOME" >> "$GITHUB_PATH"
+      - name: Clippy (browser version)
+        run: cargo clippy -p straws-gui --target wasm32-unknown-unknown --locked
+      - name: Build
+        run: bash web/build.sh
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    name: Put it on GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

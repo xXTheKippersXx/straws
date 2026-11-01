@@ -1,4 +1,4 @@
-//! STRAWS desktop app.
+//! STRAWS: the desktop app, and the same app in a browser (see web/).
 
 // No console window behind the app in release builds on Windows.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -6,16 +6,24 @@
 mod app;
 mod colormap;
 mod compute;
+#[cfg(target_arch = "wasm32")]
+mod compute_web;
+mod files;
+#[cfg(not(target_arch = "wasm32"))]
 mod icon;
 mod model;
 mod project;
 mod render3d;
 mod scene;
 mod views;
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 /// The name the app's settings and layout are saved under.
+#[cfg(not(target_arch = "wasm32"))]
 const APP_ID: &str = "STRAWS";
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     // The app is also its own engine worker (see straws_core::worker).
     straws_core::worker::run_if_worker();
@@ -44,8 +52,15 @@ fn main() -> eframe::Result {
     )
 }
 
+/// The browser version starts here: it draws into the page's canvas.
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    web::start();
+}
+
 /// Settings and layout saved before the app was called STRAWS come along
 /// (once: only while there's nothing saved under the new name).
+#[cfg(not(target_arch = "wasm32"))]
 fn bring_old_settings() {
     let (Some(old), Some(new)) = (
         eframe::storage_dir("NEC modeller"),

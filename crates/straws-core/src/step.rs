@@ -902,8 +902,9 @@ fn text(s: &str) -> String {
 
 /// Now in UTC as an ISO 8601 date and time.
 pub(crate) fn timestamp() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    // web_time: std's clock on the desktop, the browser's in the web app.
+    let secs = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs()) as i64;
     let (days, rest) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // Days to a civil date (Howard Hinnant's algorithm).

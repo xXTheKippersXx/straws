@@ -82,7 +82,7 @@ pub fn validate(deck: &Deck, overrides: &[(String, f64)]) -> Result<(), String> 
 
 impl LoadedModel {
     pub fn load(path: &Path) -> std::io::Result<LoadedModel> {
-        let deck = Deck::from_file(path)?;
+        let deck = Deck::from_bytes(&crate::files::read(path)?);
         let name = path
             .file_name()
             .map_or_else(|| "deck".to_string(), |n| n.to_string_lossy().into_owned());

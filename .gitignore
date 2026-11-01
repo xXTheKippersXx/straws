@@ -13,3 +13,7 @@ Thumbs.db
 
 # Demo screenshots and models made by driving the app (kept locally)
 demo/
+
+# Browser version build output
+/web/dist/
+/web/engine/

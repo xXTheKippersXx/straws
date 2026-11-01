@@ -3,7 +3,8 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use eframe::egui;
 use egui_dock::{DockArea, DockState, NodeIndex};
@@ -485,6 +486,8 @@ enum DialogKind {
     Export(Vec<u8>),
     /// Save, then carry on with what was waiting (if anything).
     Save(Option<Leave>),
+    /// A file dropped on the window (read first in a browser).
+    Dropped,
 }
 
 /// Actions that replace or close the open model.
@@ -552,6 +555,12 @@ fn default_dock() -> DockState<Tab> {
     dock
 }
 
+/// Said once in the browser version.
+const BROWSER_NOTE: &str = "This is STRAWS in your browser: nothing to install, and your files \
+     stay on this computer (opening a file reads it into the page; saving downloads it). The \
+     optimiser, the convergence, tolerance and sensitivity checks and the estimate for radials \
+     on or under the ground need the free desktop app, which is also several times faster.";
+
 const SETTINGS_KEY: &str = "settings";
 const DOCK_KEY: &str = "dock";
 
@@ -612,6 +621,9 @@ impl App {
             last_title: String::new(),
             screenshot_pending: false,
         };
+        if crate::files::WEB {
+            app.data.message(Level::Info, BROWSER_NOTE);
+        }
         if app.gpu.is_none() {
             app.data.message(
                 Level::Error,
@@ -639,7 +651,7 @@ impl App {
         let path = &full_path(path);
         let project = crate::project::is_project(path);
         let loaded = if project {
-            std::fs::read(path).map(|bytes| {
+            crate::files::read(path).map(|bytes| {
                 let text = String::from_utf8_lossy(&bytes).into_owned();
                 let (deck, extras) = crate::project::split(&text);
                 let name = path.file_name().map_or_else(
@@ -791,41 +803,12 @@ impl App {
 
     /// Sweeps a snapshot's design in the background.
     fn sweep_snapshot(
-        &self,
+        &mut self,
         deck: &str,
         plan: FrequencyPlan,
     ) -> Option<Receiver<Option<SweepResults>>> {
         let numeric = Deck::parse(deck).expand().ok()?;
-        let engine = self.compute.engine().ok()?;
-        let ctx = self.compute.ctx();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let run = straws_core::analysis::plan::run_deck(
-                &numeric,
-                &plan,
-                Some(straws_core::analysis::plan::PatternRequest::new(
-                    SWEEP_PATTERN_STEP,
-                )),
-            );
-            let mut results = SweepResults::new(plan);
-            let ok = engine
-                .sweep(
-                    &run,
-                    straws_core::engine::SweepOptions::default(),
-                    &straws_core::engine::CancelToken::new(),
-                    |index, r| {
-                        results.insert(
-                            index,
-                            FreqPoint::from_result(r, Some(SWEEP_PATTERN_STEP))
-                                .without_helpers(&numeric),
-                        );
-                    },
-                )
-                .is_ok();
-            let _ = tx.send(ok.then_some(results));
-            ctx.request_repaint();
-        });
-        Some(rx)
+        Some(self.compute.sweep_into(numeric, plan, SWEEP_PATTERN_STEP))
     }
 
     /// Puts finished snapshot sweeps in place.
@@ -1353,7 +1336,7 @@ impl App {
                 } else {
                     (project, deck)
                 };
-                let mut dialog = rfd::FileDialog::new()
+                let mut dialog = crate::files::Dialog::new()
                     .add_filter(first.0, &first.1)
                     .add_filter(second.0, &second.1)
                     .set_file_name(format!("{stem}.{}", first.1[0]));
@@ -1365,24 +1348,17 @@ impl App {
                 {
                     dialog = dialog.set_directory(dir);
                 }
-                self.run_dialog(DialogKind::Save(then), move || dialog.save_file());
+                self.run_dialog(
+                    DialogKind::Save(then),
+                    crate::files::save(dialog, &self.compute.ctx()),
+                );
             }
         }
     }
 
-    /// Runs a blocking file dialog on its own thread.
-    fn run_dialog(
-        &mut self,
-        kind: DialogKind,
-        show: impl FnOnce() -> Option<PathBuf> + Send + 'static,
-    ) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let ctx = self.compute.ctx();
-        std::thread::spawn(move || {
-            let _ = tx.send(show());
-            ctx.request_repaint();
-        });
-        self.dialog = Some((kind, rx));
+    /// Waits for a file dialog's answer (see `crate::files`).
+    fn run_dialog(&mut self, kind: DialogKind, answer: crate::files::Answer) {
+        self.dialog = Some((kind, answer));
     }
 
     /// Picks up a file dialog's answer once it's closed.
@@ -1398,9 +1374,18 @@ impl App {
         };
         match (kind, answer) {
             (DialogKind::Open, Some(p)) => self.open(&p),
+            (DialogKind::Dropped, Some(p)) => {
+                if is_sweep_file(&p) {
+                    self.import_measurement(&p);
+                } else if is_drawing_file(&p) {
+                    self.import_drawing(&p);
+                } else {
+                    self.leave(Leave::Open(p));
+                }
+            }
             (DialogKind::Import, Some(p)) => self.import_measurement(&p),
             (DialogKind::ImportDrawing, Some(p)) => self.import_drawing(&p),
-            (DialogKind::Export(bytes), Some(p)) => match std::fs::write(&p, bytes) {
+            (DialogKind::Export(bytes), Some(p)) => match crate::files::write(&p, &bytes) {
                 Ok(()) => self
                     .data
                     .message(Level::Info, format!("Saved {}", p.display())),
@@ -1518,7 +1503,7 @@ impl App {
             },
             None => deck_text.clone(),
         };
-        match std::fs::write(&path, &text) {
+        match crate::files::write(&path, text.as_bytes()) {
             Ok(()) => {
                 if let Some(m) = &mut self.data.model {
                     m.deck = deck;
@@ -1566,7 +1551,7 @@ impl App {
         if self.dialog.is_some() {
             return;
         }
-        let mut dialog = rfd::FileDialog::new()
+        let mut dialog = crate::files::Dialog::new()
             .add_filter(filter, &[ext])
             .set_file_name(name);
         if let Some(dir) = self
@@ -1579,7 +1564,10 @@ impl App {
         {
             dialog = dialog.set_directory(dir);
         }
-        self.run_dialog(DialogKind::Export(bytes), move || dialog.save_file());
+        self.run_dialog(
+            DialogKind::Export(bytes),
+            crate::files::save(dialog, &self.compute.ctx()),
+        );
     }
 
     /// The model's name without ".nec", for file names.
@@ -2006,13 +1994,16 @@ impl App {
         if self.dialog.is_some() {
             return;
         }
-        let mut dialog = rfd::FileDialog::new()
+        let mut dialog = crate::files::Dialog::new()
             .add_filter("Touchstone (VNA sweeps)", &["s1p", "s2p", "S1P", "S2P"])
             .add_filter("All files", &["*"]);
         if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
-        self.run_dialog(DialogKind::Import, move || dialog.pick_file());
+        self.run_dialog(
+            DialogKind::Import,
+            crate::files::pick(dialog, &self.compute.ctx()),
+        );
     }
 
     /// Reads a Touchstone file into the measurements, or says why it can't.
@@ -2026,7 +2017,7 @@ impl App {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let read = std::fs::read(path)
+        let read = crate::files::read(path)
             .map_err(|e| e.to_string())
             .and_then(|bytes| {
                 let text = String::from_utf8_lossy(&bytes);
@@ -2122,7 +2113,7 @@ impl App {
         if self.dialog.is_some() {
             return;
         }
-        let mut dialog = rfd::FileDialog::new()
+        let mut dialog = crate::files::Dialog::new()
             .add_filter(
                 "CAD drawings and models",
                 &["dxf", "DXF", "step", "STEP", "stp", "STP", "stl", "STL"],
@@ -2131,7 +2122,10 @@ impl App {
         if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
-        self.run_dialog(DialogKind::ImportDrawing, move || dialog.pick_file());
+        self.run_dialog(
+            DialogKind::ImportDrawing,
+            crate::files::pick(dialog, &self.compute.ctx()),
+        );
     }
 
     /// Reads a DXF drawing and opens the import dialog for it.
@@ -2140,7 +2134,7 @@ impl App {
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let read = std::fs::read(path)
+        let read = crate::files::read(path)
             .map_err(|e| e.to_string())
             .and_then(|bytes| {
                 crate::views::cadimport::CadImport::new(
@@ -2272,14 +2266,17 @@ impl App {
         if self.dialog.is_some() {
             return;
         }
-        let mut dialog = rfd::FileDialog::new().add_filter(
+        let mut dialog = crate::files::Dialog::new().add_filter(
             "STRAWS projects and NEC decks",
             &["straws", "STRAWS", "nec", "NEC"],
         );
         if let Some(dir) = self.settings.recent.first().and_then(|p| p.parent()) {
             dialog = dialog.set_directory(dir);
         }
-        self.run_dialog(DialogKind::Open, move || dialog.pick_file());
+        self.run_dialog(
+            DialogKind::Open,
+            crate::files::pick(dialog, &self.compute.ctx()),
+        );
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -2310,38 +2307,51 @@ impl App {
                     ui.close();
                     self.leave(Leave::OpenDialog);
                 }
-                let reload = self.data.model.as_ref().and_then(|m| m.path.clone());
-                if ui
-                    .add_enabled(
-                        reload.is_some(),
-                        egui::Button::new("Reload").shortcut_text("Ctrl+R"),
-                    )
-                    .clicked()
+                // A browser can't read files from disk again by itself.
+                let reload = self
+                    .data
+                    .model
+                    .as_ref()
+                    .and_then(|m| m.path.clone())
+                    .filter(|_| !crate::files::WEB);
+                if !crate::files::WEB
+                    && ui
+                        .add_enabled(
+                            reload.is_some(),
+                            egui::Button::new("Reload").shortcut_text("Ctrl+R"),
+                        )
+                        .clicked()
                 {
                     ui.close();
                     if let Some(p) = reload {
                         self.leave(Leave::Open(p));
                     }
                 }
-                ui.menu_button("Open recent", |ui| {
-                    if self.settings.recent.is_empty() {
-                        ui.label("Nothing yet");
-                    }
-                    let mut chosen = None;
-                    for p in &self.settings.recent {
-                        if ui.button(p.display().to_string()).clicked() {
-                            chosen = Some(p.clone());
+                if !crate::files::WEB {
+                    ui.menu_button("Open recent", |ui| {
+                        if self.settings.recent.is_empty() {
+                            ui.label("Nothing yet");
                         }
-                    }
-                    if let Some(p) = chosen {
-                        ui.close();
-                        self.leave(Leave::Open(p));
-                    }
-                });
+                        let mut chosen = None;
+                        for p in &self.settings.recent {
+                            if ui.button(p.display().to_string()).clicked() {
+                                chosen = Some(p.clone());
+                            }
+                        }
+                        if let Some(p) = chosen {
+                            ui.close();
+                            self.leave(Leave::Open(p));
+                        }
+                    });
+                }
                 let has_model = self.data.model.is_some();
                 if ui
                     .add_enabled(has_model, egui::Button::new("Save").shortcut_text("Ctrl+S"))
-                    .on_hover_text("Write the model, with the Variables values, to its deck file")
+                    .on_hover_text(if crate::files::WEB {
+                        "Download the model, with the Variables values, as a file"
+                    } else {
+                        "Write the model, with the Variables values, to its deck file"
+                    })
                     .clicked()
                 {
                     ui.close();
@@ -2378,9 +2388,11 @@ impl App {
                     ui.close();
                     self.import_drawing_dialog();
                 }
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    self.leave(Leave::Quit);
+                if !crate::files::WEB {
+                    ui.separator();
+                    if ui.button("Quit").clicked() {
+                        self.leave(Leave::Quit);
+                    }
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -2532,6 +2544,14 @@ impl App {
                     ui.add_space(6.0);
                     ui.label("A fast, modern antenna modeller built on the NEC-2 method of moments.");
                     ui.label("Free software under the GNU General Public Licence, version 3 or later.");
+                    if crate::files::WEB {
+                        ui.add_space(6.0);
+                        ui.label(BROWSER_NOTE);
+                        ui.hyperlink_to(
+                            "Download the desktop app",
+                            "https://github.com/xXTheKippersXx/straws/releases",
+                        );
+                    }
                     ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new(
@@ -2764,7 +2784,7 @@ impl eframe::App for App {
             (
                 cmd && i.key_pressed(egui::Key::O),
                 cmd && i.key_pressed(egui::Key::R),
-                i.raw.dropped_files.first().map(|f| f.path().to_path_buf()),
+                i.raw.dropped_files.first().cloned(),
                 cmd && i.key_pressed(egui::Key::S),
                 !typing && cmd && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
                 !typing
@@ -2802,14 +2822,9 @@ impl eframe::App for App {
         if reload && let Some(p) = self.data.model.as_ref().and_then(|m| m.path.clone()) {
             self.leave(Leave::Open(p));
         }
-        if let Some(p) = dropped {
-            if is_sweep_file(&p) {
-                self.import_measurement(&p);
-            } else if is_drawing_file(&p) {
-                self.import_drawing(&p);
-            } else {
-                self.leave(Leave::Open(p));
-            }
+        if let Some(file) = dropped {
+            let answer = crate::files::dropped(file, &ctx);
+            self.run_dialog(DialogKind::Dropped, answer);
         }
         // Closing the window with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.allow_close && self.changed() {

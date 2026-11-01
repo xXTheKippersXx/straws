@@ -3765,6 +3765,7 @@ dependencies = [
  "cc",
  "faer",
  "num-complex",
+ "web-time",
 ]
 
 [[package]]
@@ -3776,11 +3777,16 @@ dependencies = [
  "egui_dock",
  "egui_plot",
  "glam",
+ "js-sys",
  "png",
  "rfd",
  "ron",
  "serde",
  "straws-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "winresource",
 ]
 
