@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/straws-core", "crates/straws-cli", "crates/straws-gui"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.99"
 license = "GPL-3.0-or-later"
