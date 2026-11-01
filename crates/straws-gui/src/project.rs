@@ -511,6 +511,61 @@ mod tests {
         assert!(split(&broken).1.unwrap().is_err());
     }
 
+    /// A damaged project file (cut short, bytes changed) reads as far as it
+    /// can or says why: never a panic.
+    #[test]
+    fn damaged_projects_never_panic() {
+        let deck = "CM test\r\nGW 1 11 0 0 0 0 0 1 0.001\r\nGE 0\r\nEX 0 1 6 0 1 0\r\nFR 0 1 0 0 14.2 0\r\nEN\r\n";
+        let extras = Extras {
+            notes: "notes".into(),
+            mhz: 14.1,
+            z0: 50.0,
+            optimiser: OptimiserSave {
+                goals: vec![GoalSave::from_goal(&Goal::Match {
+                    name: "VNA".into(),
+                    start_mhz: 14.0,
+                    stop_mhz: 14.3,
+                    measured: vec![Complex64::new(50.0, -3.0)],
+                    z0: 50.0,
+                    target: 0.05,
+                    weight: 1.0,
+                })],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let text = join(deck, &extras).unwrap();
+        let bytes = text.as_bytes();
+        let mut seed: u64 = 7;
+        let mut inputs: Vec<Vec<u8>> = (0..bytes.len())
+            .step_by((bytes.len() / 80).max(1))
+            .map(|cut| bytes[..cut].to_vec())
+            .collect();
+        for _ in 0..400 {
+            let mut b = bytes.to_vec();
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let at = (seed % b.len() as u64) as usize;
+            b[at] = (seed >> 32) as u8;
+            inputs.push(b);
+        }
+        for input in inputs {
+            let text = String::from_utf8_lossy(&input).into_owned();
+            let result = std::panic::catch_unwind(|| {
+                let (_, extras) = split(&text);
+                if let Some(Ok(e)) = extras {
+                    let mut s = Settings::default();
+                    e.feed.apply(&mut s);
+                    for g in &e.optimiser.goals {
+                        let _ = g.to_goal();
+                    }
+                }
+            });
+            assert!(result.is_ok(), "panicked on:\n{text}");
+        }
+    }
+
     #[test]
     fn feedline_settings_go_by_name() {
         let s = Settings {

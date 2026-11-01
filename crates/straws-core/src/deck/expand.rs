@@ -589,16 +589,18 @@ impl NumericDeck {
         let mut total: i64 = 0;
         for c in &self.cards[..self.control_start()] {
             let int = |k: usize| c.ints.get(k).copied().unwrap_or(0).max(0);
+            // Saturating: a deck may ask for absurd counts (1e308 segments),
+            // and the estimate is for refusing those.
             match c.mnemonic.as_str() {
-                "GW" | "GA" | "GH" => total += int(1),
-                "SP" => total += 1,
-                "SM" => total += int(0).max(1) * int(1).max(1),
+                "GW" | "GA" | "GH" => total = total.saturating_add(int(1)),
+                "SP" => total = total.saturating_add(1),
+                "SM" => total = total.saturating_add(int(0).max(1).saturating_mul(int(1).max(1))),
                 // NR copies of the whole structure so far.
-                "GR" => total *= int(1).max(1),
+                "GR" => total = total.saturating_mul(int(1).max(1)),
                 // One mirror image per plane flagged in the digits.
                 "GX" => {
                     let planes = int(1).to_string().chars().filter(|d| *d == '1').count();
-                    total <<= planes.min(3);
+                    total = total.saturating_mul(1 << planes.min(3));
                 }
                 _ => {}
             }

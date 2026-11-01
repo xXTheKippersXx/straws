@@ -217,15 +217,6 @@ impl WiresView {
             ),
         ];
         let row_height = ui.spacing().interact_size.y + 2.0;
-        ui.horizontal(|ui| {
-            for (name, w, tip) in &columns {
-                ui.add_sized(
-                    [*w, row_height],
-                    egui::Label::new(RichText::new(*name).strong()),
-                )
-                .on_hover_text(tip.as_str());
-            }
-        });
         let wires = model.wires.clone();
         let issues: Vec<(i64, Severity, String)> = data
             .checks
@@ -241,7 +232,22 @@ impl WiresView {
         let mut new_variable = None;
         let mut show_variables = false;
         let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        egui::ScrollArea::both()
+        // The header scrolls sideways with the rows (a narrow panel cuts
+        // the table off at the right).
+        egui::ScrollArea::horizontal()
+            .id_salt("wire table")
+            .auto_shrink(false)
+            .show(ui, |ui| {
+        ui.horizontal(|ui| {
+            for (name, w, tip) in &columns {
+                ui.add_sized(
+                    [*w, row_height],
+                    egui::Label::new(RichText::new(*name).strong()),
+                )
+                .on_hover_text(tip.as_str());
+            }
+        });
+        egui::ScrollArea::vertical()
             .auto_shrink(false)
             .show_rows(ui, row_height, wires.len(), |ui, rows| {
                 for row in rows {
@@ -417,6 +423,7 @@ impl WiresView {
                 if wires.is_empty() {
                     ui.label(RichText::new("No straight wires yet. Click Add wire, or draw one in the 3D model view.").weak());
                 }
+            });
             });
         if new_variable.is_some() {
             data.new_variable = new_variable;

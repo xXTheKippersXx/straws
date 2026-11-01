@@ -585,7 +585,10 @@ fn validate_one(path: &Path, settings: &ValidateSettings, engine: &Engine) -> Ou
         Ok(d) => d,
         Err(e) => return Outcome::Skip(e),
     };
-    if deck.segment_estimate() > max_segments as i64 {
+    // A guard against enormous decks before solving (the estimate counts
+    // patches too); the limit itself is checked on the solved model's
+    // wire segments below, so patch models are still compared.
+    if deck.segment_estimate() > 4 * max_segments as i64 {
         return Outcome::Skip(format!("about {} segments", deck.segment_estimate()));
     }
     if pattern {

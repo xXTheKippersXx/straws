@@ -1076,7 +1076,10 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
                                 ui.label(format!("{:.3} W", r.power)).on_hover_text(
                                     "Power this feed point takes, for the amplitudes as set (negative: it gives power back)",
                                 );
-                                if !in_db {
+                                if results.len() < 2 {
+                                    // One source has all the power: nothing to share.
+                                    ui.label("100 %");
+                                } else if !in_db {
                                     let mut want = share;
                                     if ui
                                         .add(crate::views::num(&mut want).range(0.1..=99.9).speed(0.2).max_decimals(1).suffix(" %"))

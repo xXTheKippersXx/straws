@@ -22,6 +22,23 @@ The decks in `benchmarks/` are made by `benchmarks/generate.py`. Each measuremen
 - **Speed-up**: 4nec2 engine time divided by the faster nec2c time.
 
 
+## 2026-11-02: testing protocol run 3 (phase 9 finished)
+
+Release build, dev machine, nothing else running, `--repeat 3`. Nothing in the solving path has changed since 2026-10-28; single-process times match, while split sweeps were up to 8% slower than then. A build of the 2026-10-28 commit timed side by side on the same day gave the same or slower figures (row 03 split: 217-223 ms now, 227-229 ms then), so the difference is the machine's state that day, not the code. 4nec2's engine also ran 15-30% faster than on 2026-10-28, which lowers the speed-up column.
+
+| Deck | Segments | Freqs | nec2c, 1 process (ms) | nec2c, split sweep (ms) | 4nec2 engine (ms) | Speed-up |
+|---|---:|---:|---:|---:|---:|---:|
+| 01 small dipole sweep, free space | 21 | 101 | 29.0 | 21.4 | 100 | 4.7× |
+| 02 small dipole sweep, Sommerfeld ground | 21 | 101 | 58.3 | 58.8 | 6,676 | 115× |
+| 03 7-element Yagi sweep, free space | 315 | 51 | 388 | 229 | 6,136 | 27× |
+| 04 7-element Yagi sweep, Sommerfeld ground | 315 | 51 | 896 | 595 | 15,319 | 26× |
+| 05 7-element Yagi, 1° full-sphere pattern | 315 | 1 | 327 | 123 | 6,306 | 52× |
+| 06 wire grid + dipole, free space | 1,533 | 3 | 474 | 440 | 13,069 | 30× |
+| 07 wire grid + dipole, Sommerfeld ground | 1,533 | 1 | 351 | 378 | 7,138 | 20× |
+| 08 large wire grid + dipole, free space | 2,985 | 1 | 786 | 786 | 25,032 | 32× |
+
+Also: a trivial engine run 2.7-3.0 ms; a slider update (315-segment Yagi, Sommerfeld, 5° pattern) 31-37 ms once warm; the optimiser 85 / 131 designs a second (fine-tuning / whole range); no worker processes left after closing the app.
+
 ## 2026-10-28: testing protocol run 2 (persistent workers, binary results)
 
 Release build, dev machine, nothing else running, `--repeat 3`. Every row is at or better than the 2026-10-26 figures.

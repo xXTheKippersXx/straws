@@ -313,7 +313,21 @@ pub enum Request {
     Sweep(f64, f64),
 }
 
-/// Whether a file is a measured sweep (Touchstone) rather than a deck.
+/// A file's full path as people write it: absolute, without Windows'
+/// `\\?\` prefix that canonical paths carry.
+pub fn full_path(path: &Path) -> PathBuf {
+    let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let text = abs.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest)
+    } else {
+        abs
+    }
+}
+
+/// Whether a file is a CAD drawing or model to import (DXF, STL, STEP).
 fn is_drawing_file(path: &Path) -> bool {
     path.extension().is_some_and(|e| {
         ["dxf", "stl", "step", "stp"]
@@ -622,7 +636,7 @@ impl App {
 
     fn open(&mut self, path: &Path) {
         // Remember full paths, so "Open recent" works from anywhere.
-        let path = &std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let path = &full_path(path);
         let project = crate::project::is_project(path);
         let loaded = if project {
             std::fs::read(path).map(|bytes| {
@@ -650,6 +664,10 @@ impl App {
                 return;
             }
         };
+        // Older lists may hold `\\?\` paths: tidy them as we go.
+        for p in &mut self.settings.recent {
+            *p = full_path(p);
+        }
         self.settings.recent.retain(|p| p != path);
         self.settings.recent.insert(0, path.to_path_buf());
         self.settings.recent.truncate(10);
@@ -1719,7 +1737,7 @@ impl App {
         }
         if ui
             .add_enabled(has_wires, egui::Button::new("Wires as tubes (STL)…"))
-            .on_hover_text("Every segment as a solid tube at its real diameter, in millimetres; FreeCAD can turn it into a solid and save STEP")
+            .on_hover_text("Every segment as a closed tube at its real diameter, in millimetres: a mesh for 3D printing and mesh tools (for CAD programs, Solid model (STEP) below keeps true cylinders and each part apart)")
             .clicked()
             && let Some(m) = &self.data.model
         {

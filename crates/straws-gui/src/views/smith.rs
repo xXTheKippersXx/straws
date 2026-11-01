@@ -100,7 +100,12 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
         .collect();
     let rect = ui.available_rect_before_wrap();
     let response = ui.allocate_rect(rect, Sense::click());
-    let (centre, radius) = grid(ui, rect);
+    // A line above the chart for the readout and one below for the note.
+    let chart = egui::Rect::from_min_max(
+        rect.min + vec2(0.0, 20.0),
+        (rect.max - vec2(0.0, 18.0)).max(rect.min + vec2(0.0, 40.0)),
+    );
+    let (centre, radius) = grid(ui, chart);
     let painter = ui.painter_at(rect);
     let dark = ui.visuals().dark_mode;
 

@@ -78,6 +78,7 @@ pub fn read_dxf(text: &str, step_deg: f64) -> Result<Drawing, String> {
             .ok_or("the file ends half way through an entry")?;
         pairs.push((code, value.trim()));
     }
+    let step_deg = if step_deg.is_nan() { 10.0 } else { step_deg };
     let step = step_deg.clamp(0.5, 90.0).to_radians();
     let mut drawing = Drawing::default();
     let mut skipped: HashMap<String, usize> = HashMap::new();
@@ -262,10 +263,18 @@ fn cross(a: P3, b: P3) -> P3 {
     ]
 }
 
+/// The most straight pieces one curve is cut into.
+const MAX_PIECES: usize = 4000;
+
 /// Points round an arc in its plane, from `start` turning `sweep` radians
 /// (anticlockwise when positive), `start` included.
 fn arc_points(centre: [f64; 2], r: f64, start: f64, sweep: f64, step: f64) -> Vec<[f64; 2]> {
-    let n = (sweep.abs() / step).ceil().max(1.0) as usize;
+    // Numbers a broken file can hold (infinite angles, a sweep of many
+    // turns) give no arc, or one of at most a few hundred pieces.
+    if !(start.is_finite() && sweep.is_finite() && r.is_finite() && step > 0.0) {
+        return Vec::new();
+    }
+    let n = ((sweep.abs() / step).ceil().max(1.0) as usize).min(MAX_PIECES);
     (0..=n)
         .map(|k| {
             let a = start + sweep * k as f64 / n as f64;
@@ -291,6 +300,10 @@ fn bulge_points(a: [f64; 2], b: [f64; 2], bulge: f64, step: f64) -> Vec<[f64; 2]
     let r = ((a[0] - centre[0]).powi(2) + (a[1] - centre[1]).powi(2)).sqrt();
     let start = (a[1] - centre[1]).atan2(a[0] - centre[0]);
     let mut pts = arc_points(centre, r, start, sweep, step);
+    if pts.len() < 2 {
+        // No arc from these numbers: straight to the next vertex.
+        return vec![b];
+    }
     pts.remove(0);
     if let Some(last) = pts.last_mut() {
         *last = b; // exactly on the next vertex
@@ -379,9 +392,11 @@ fn polyline(e: &Entity, vertices: &[Entity], step: f64) -> Option<Vec<P3>> {
 fn arc(e: &Entity, step: f64) -> Vec<P3> {
     let c = e.point(10);
     let start = e.num(50, 0.0).to_radians();
-    let mut sweep = e.num(51, 360.0).to_radians() - start;
-    while sweep <= 0.0 {
-        sweep += 2.0 * PI;
+    // Anticlockwise from the start to the end, less than a turn (a whole
+    // turn if they're equal); no sweep for angles that aren't numbers.
+    let mut sweep = (e.num(51, 360.0).to_radians() - start).rem_euclid(2.0 * PI);
+    if sweep == 0.0 {
+        sweep = 2.0 * PI;
     }
     let ocs = e.ocs();
     arc_points([c[0], c[1]], e.num(40, 0.0), start, sweep, step)
@@ -411,11 +426,17 @@ fn ellipse(e: &Entity, step: f64) -> Vec<P3> {
     let ocs = e.ocs();
     let minor = scale(cross(ocs.z, major), e.num(40, 1.0));
     let start = e.num(41, 0.0);
-    let mut end = e.num(42, 2.0 * PI);
-    while end <= start {
-        end += 2.0 * PI;
+    let end = e.num(42, 2.0 * PI);
+    if !(start.is_finite() && end.is_finite()) {
+        return Vec::new();
     }
-    let n = ((end - start) / step).ceil().max(1.0) as usize;
+    // The end after the start, less than a turn on (a whole turn if equal).
+    let mut sweep = (end - start).rem_euclid(2.0 * PI);
+    if sweep == 0.0 {
+        sweep = 2.0 * PI;
+    }
+    let end = start + sweep;
+    let n = (((end - start) / step).ceil().max(1.0) as usize).min(MAX_PIECES);
     (0..=n)
         .map(|k| {
             let t = start + (end - start) * k as f64 / n as f64;
@@ -617,7 +638,12 @@ pub(crate) fn merge_points(points: &[P3], tol: f64) -> Vec<usize> {
         for dx in -1..=1 {
             for dy in -1..=1 {
                 for dz in -1..=1 {
-                    if let Some(others) = grid.get(&[k[0] + dx, k[1] + dy, k[2] + dz]) {
+                    let cell = [
+                        k[0].saturating_add(dx),
+                        k[1].saturating_add(dy),
+                        k[2].saturating_add(dz),
+                    ];
+                    if let Some(others) = grid.get(&cell) {
                         for &j in others {
                             let q = points[j];
                             if norm([p[0] - q[0], p[1] - q[1], p[2] - q[2]]) <= tol {

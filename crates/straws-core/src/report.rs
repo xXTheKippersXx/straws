@@ -493,11 +493,17 @@ fn nice_step(raw: f64) -> f64 {
     n * p
 }
 
-/// The multiples of `step` from `lo` to `hi`.
+/// The multiples of `step` from `lo` to `hi` (none for a range that isn't
+/// a few dozen steps of real numbers).
 fn ticks(lo: f64, hi: f64, step: f64) -> Vec<f64> {
-    let first = (lo / step - 1e-9).ceil() as i64;
-    let last = (hi / step + 1e-9).floor() as i64;
-    (first..=last).map(|k| k as f64 * step).collect()
+    let first = (lo / step - 1e-9).ceil();
+    let last = (hi / step + 1e-9).floor();
+    if !(first.is_finite() && last.is_finite()) || last - first > 50.0 {
+        return Vec::new();
+    }
+    (first as i64..=last as i64)
+        .map(|k| k as f64 * step)
+        .collect()
 }
 
 /// A tick label with as many decimals as the step needs.
@@ -670,6 +676,10 @@ mod tests {
         assert_eq!(tick(2.5, 0.5), "2.5");
         assert_eq!(tick(14.05, 0.05), "14.05");
         assert_eq!(tick(-0.0, 1.0), "0");
+        // An infinite or huge range gets no ticks rather than endless ones.
+        assert!(ticks(f64::NEG_INFINITY, f64::INFINITY, 1.0).is_empty());
+        assert!(ticks(-1e300, 1e300, 1.0).is_empty());
+        assert!(ticks(f64::NAN, 1.0, 1.0).is_empty());
     }
 
     #[test]
