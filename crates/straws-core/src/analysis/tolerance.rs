@@ -9,10 +9,13 @@
 //! helices and patches are built as drawn.
 
 use super::buried::Setup;
-use super::convergence::{Figures, figures};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::convergence::{Figures, figures_with};
 use super::plan::FrequencyPlan;
 use crate::deck::NumericDeck;
 use crate::engine::{CancelToken, Engine};
+use crate::runner::{Runner, block_on, par_map};
 
 /// A model with every distinct GW end point moved by up to `accuracy`
 /// metres along each axis, from the random stream `seed`.
@@ -80,34 +83,63 @@ pub fn spread(
     cancel: &CancelToken,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<Spread, String> {
-    let design = figures(engine, deck, plan, mhz, estimate, cancel)?;
-    let engine = engine.clone().with_solver_threads(1);
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(Vec::new());
-    std::thread::scope(|s| {
-        for _ in 0..threads.clamp(1, builds.max(1)) {
-            s.spawn(|| {
-                loop {
-                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if k >= builds || cancel.is_cancelled() {
-                        break;
-                    }
-                    let build = perturbed(deck, accuracy, k as u64 + 1, over_ground);
-                    let r = figures(&engine, &build, plan, mhz, estimate, cancel);
-                    if let Ok(mut all) = results.lock() {
-                        all.push(r);
-                        progress(all.len(), builds);
-                    }
+    // Several builds run at once: one solver thread each.
+    let single = engine.clone().with_solver_threads(1);
+    block_on(spread_with(
+        engine,
+        &single,
+        deck,
+        plan,
+        mhz,
+        accuracy,
+        builds,
+        threads,
+        over_ground,
+        estimate,
+        cancel,
+        progress,
+    ))
+}
+
+/// [`spread`] on any [`Runner`]: `runner` runs the design, `builds_runner`
+/// the builds.
+#[allow(clippy::too_many_arguments)]
+pub async fn spread_with<R: Runner + Sync>(
+    runner: &R,
+    builds_runner: &R,
+    deck: &NumericDeck,
+    plan: &FrequencyPlan,
+    mhz: f64,
+    accuracy: f64,
+    builds: usize,
+    threads: usize,
+    over_ground: bool,
+    estimate: Option<&Setup>,
+    cancel: &CancelToken,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<Spread, String> {
+    let design = figures_with(runner, deck, plan, mhz, estimate, cancel).await?;
+    let done = AtomicUsize::new(0);
+    let all = par_map(
+        (0..builds).collect(),
+        threads.clamp(1, builds.max(1)),
+        |k: usize| {
+            let done = &done;
+            async move {
+                if cancel.is_cancelled() {
+                    return Err("stopped".to_string());
                 }
-            });
-        }
-    });
+                let build = perturbed(deck, accuracy, k as u64 + 1, over_ground);
+                let r = figures_with(builds_runner, &build, plan, mhz, estimate, cancel).await;
+                progress(done.fetch_add(1, Ordering::Relaxed) + 1, builds);
+                r
+            }
+        },
+    )
+    .await;
     if cancel.is_cancelled() {
         return Err("stopped".into());
     }
-    let all = results
-        .into_inner()
-        .map_err(|_| "a worker failed".to_string())?;
     let builds: Vec<Figures> = all.into_iter().filter_map(Result::ok).collect();
     if builds.is_empty() {
         return Err("none of the builds ran".into());

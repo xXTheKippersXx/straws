@@ -31,6 +31,7 @@ use crate::deck::ground::{Ground, ground};
 use crate::deck::radials::RadialNumbers;
 use crate::deck::{Deck, NumCard};
 use crate::engine::{CancelToken, Engine};
+use crate::runner::{Runner, block_on, join_all};
 use crate::units::wavelength;
 
 const ETA0: f64 = 376.730_313;
@@ -246,6 +247,18 @@ pub fn estimate(
     samples: usize,
     cancel: &CancelToken,
 ) -> Result<Estimate, String> {
+    block_on(estimate_with(engine, numeric, setup, plan, samples, cancel))
+}
+
+/// [`estimate`] on any [`Runner`] (its sample frequencies run at once).
+pub async fn estimate_with<R: Runner>(
+    runner: &R,
+    numeric: &NumericDeck,
+    setup: &Setup,
+    plan: &FrequencyPlan,
+    samples: usize,
+    cancel: &CancelToken,
+) -> Result<Estimate, String> {
     let hub = setup.centre();
     let ground_deck = perfect(numeric, hub);
     let first = |r: &crate::output::FrequencyResult| {
@@ -255,8 +268,9 @@ pub fn estimate(
             .copied()
     };
     // Over perfect ground, at every frequency.
-    let out = engine
-        .run(&run_deck(&ground_deck, plan, None), cancel)
+    let out = runner
+        .solve(&run_deck(&ground_deck, plan, None), cancel)
+        .await
         .map_err(|e| e.to_string())?;
     let perfect: Vec<(f64, Complex64)> = out
         .frequencies
@@ -270,11 +284,7 @@ pub fn estimate(
     // The ground and radials' share, at a few frequencies.
     let n = samples.clamp(1, plan.points.max(1));
     let samples_plan = FrequencyPlan { points: n, ..*plan };
-    let mut added = Vec::new();
-    for mhz in samples_plan.frequencies() {
-        let p = point(engine, numeric, setup, mhz, cancel)?;
-        added.push((p.mhz, p.dz));
-    }
+    let added = sample_points(runner, numeric, setup, samples_plan.frequencies(), cancel).await?;
     Ok(Estimate { perfect, added })
 }
 
@@ -284,6 +294,20 @@ pub fn estimate(
 /// whose goals each have their own frequencies.
 pub fn estimate_at(
     engine: &Engine,
+    numeric: &NumericDeck,
+    setup: &Setup,
+    mhz: &[f64],
+    samples: usize,
+    cancel: &CancelToken,
+) -> Result<Estimate, String> {
+    block_on(estimate_at_with(
+        engine, numeric, setup, mhz, samples, cancel,
+    ))
+}
+
+/// [`estimate_at`] on any [`Runner`].
+pub async fn estimate_at_with<R: Runner>(
+    runner: &R,
     numeric: &NumericDeck,
     setup: &Setup,
     mhz: &[f64],
@@ -308,7 +332,10 @@ pub fn estimate_at(
         run.cards.push(NumCard::new("FR", &[0, 1], &[f, 0.0]));
         run.cards.push(NumCard::new("XQ", &[0], &[]));
     }
-    let out = engine.run(&run, cancel).map_err(|e| e.to_string())?;
+    let out = runner
+        .solve(&run, cancel)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut perfect: Vec<(f64, Complex64)> = out
         .frequencies
         .iter()
@@ -331,17 +358,44 @@ pub fn estimate_at(
         stop_mhz: hi,
         points: n,
     };
-    let mut added = Vec::new();
-    for f in plan.frequencies() {
-        let p = point(engine, numeric, setup, f, cancel)?;
-        added.push((p.mhz, p.dz));
-    }
+    let added = sample_points(runner, numeric, setup, plan.frequencies(), cancel).await?;
     Ok(Estimate { perfect, added })
+}
+
+/// The ground and radials' share at each of `mhz`, run at once.
+async fn sample_points<R: Runner>(
+    runner: &R,
+    numeric: &NumericDeck,
+    setup: &Setup,
+    mhz: Vec<f64>,
+    cancel: &CancelToken,
+) -> Result<Vec<(f64, Complex64)>, String> {
+    let points = join_all(
+        mhz.into_iter()
+            .map(|f| point_with(runner, numeric, setup, f, cancel))
+            .collect(),
+    )
+    .await;
+    points
+        .into_iter()
+        .map(|p| p.map(|p| (p.mhz, p.dz)))
+        .collect()
 }
 
 /// The estimate at one frequency.
 pub fn point(
     engine: &Engine,
+    numeric: &NumericDeck,
+    setup: &Setup,
+    mhz: f64,
+    cancel: &CancelToken,
+) -> Result<Point, String> {
+    block_on(point_with(engine, numeric, setup, mhz, cancel))
+}
+
+/// [`point`] on any [`Runner`].
+pub async fn point_with<R: Runner>(
+    runner: &R,
     numeric: &NumericDeck,
     setup: &Setup,
     mhz: f64,
@@ -359,7 +413,10 @@ pub fn point(
         .map(|c| c.floats[6])
         .fold(0.0, f64::max);
     run.cards.extend(rings(mhz, reach, 3.0 * thickest));
-    let out = engine.run(&run, cancel).map_err(|e| e.to_string())?;
+    let out = runner
+        .solve(&run, cancel)
+        .await
+        .map_err(|e| e.to_string())?;
     let r = out
         .frequencies
         .first()

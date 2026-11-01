@@ -558,8 +558,7 @@ fn default_dock() -> DockState<Tab> {
 /// Said once in the browser version.
 const BROWSER_NOTE: &str = "This is STRAWS in your browser: nothing to install, and your files \
      stay on this computer (opening a file reads it into the page; saving downloads it). The \
-     optimiser, the convergence, tolerance and sensitivity checks and the estimate for radials \
-     on or under the ground need the free desktop app, which is also several times faster.";
+     free desktop app does the same, several times faster.";
 
 const SETTINGS_KEY: &str = "settings";
 const DOCK_KEY: &str = "dock";

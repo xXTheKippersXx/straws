@@ -8,16 +8,12 @@ saving one downloads it.
 
 ## What's in it
 
-Everything that doesn't need the desktop: building and editing models (3D
-drawing, wire table, deck text, variables and sliders, templates and the
-design library), sweeps, the frequency slider, 3D patterns and cuts, SWR,
-Smith chart, matching, feedlines, feeds and arrays, near fields, comparison
-snapshots, projects, imports and exports.
-
-Not yet (they say "Needs the desktop app"): the optimiser, the convergence,
-tolerance and sensitivity checks, and the estimate for radials on or under
-the ground. They run thousands of engine solves, or several in a row, from
-code that waits for each result; a browser page can't wait like that.
+Everything: building and editing models (3D drawing, wire table, deck text,
+variables and sliders, templates and the design library), sweeps, the
+frequency slider, 3D patterns and cuts, SWR, Smith chart, matching,
+feedlines, feeds and arrays, near fields, the optimiser, the convergence,
+tolerance and sensitivity checks, radials on or under the ground,
+comparison snapshots, projects, imports and exports.
 
 It's slower than the desktop app (the engine runs about three times
 slower in WebAssembly, and without the desktop's parallel solver), but
@@ -35,6 +31,11 @@ small and medium models still sweep in well under a second.
   global state and `exit()` calls stay contained, with a small in-memory
   file system for its files. Sweeps are split across the workers (one per
   core, up to 8).
+- The analyses that run many decks (the optimiser, the checks, the
+  buried-radial estimate) are async functions in `straws-core` written
+  against `runner::Runner`. On the desktop the engine is the runner and
+  they spread over threads; in a browser `web::PoolRunner` hands each deck
+  to the Web Workers, so a whole batch runs at once without threads.
 - Sommerfeld ground tables, which the desktop caches in files, are kept in
   each worker's memory and passed on to the others, so a sweep run again
   after an edit skips working them out.

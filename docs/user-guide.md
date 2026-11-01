@@ -513,10 +513,8 @@ programs. It's the same app and the same engine, with a few differences:
   your Downloads folder, or wherever the browser asks). Nothing is sent
   anywhere. There's no Open recent, since a page can't reopen files from
   your disk by itself; drop a file on the window to open it.
-- The optimiser, the convergence, tolerance and sensitivity checks and the
-  estimate for radials on or under the ground say "Needs the desktop app".
-- It's slower: the engine runs about three times slower, so big models and
-  long sweeps take longer than on the desktop.
+- It's slower: the engine runs about three times slower, so big models,
+  long sweeps and long optimiser runs take longer than on the desktop.
 - Settings and the panel layout are kept by the browser, for that browser.
 
 ## Limits

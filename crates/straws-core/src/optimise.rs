@@ -30,6 +30,7 @@ use crate::analysis::{buried, checks, feed};
 use crate::deck::{Deck, NumCard, NumericDeck};
 use crate::engine::{CancelToken, Engine};
 use crate::output::FrequencyResult;
+use crate::runner::{Runner, block_on, par_map};
 
 /// A variable the optimiser may change, between `min` and `max`.
 #[derive(Debug, Clone, PartialEq)]
@@ -693,6 +694,16 @@ fn score_goal(
 impl Problem {
     /// Runs the design with `values` and scores it, in one engine run.
     pub fn evaluate(&self, engine: &Engine, values: &[f64], cancel: &CancelToken) -> Trial {
+        block_on(self.evaluate_with(engine, values, cancel))
+    }
+
+    /// [`Problem::evaluate`] on any [`Runner`].
+    pub async fn evaluate_with<R: Runner>(
+        &self,
+        runner: &R,
+        values: &[f64],
+        cancel: &CancelToken,
+    ) -> Trial {
         let failed = || Trial {
             values: values.to_vec(),
             cost: FAILED,
@@ -708,7 +719,7 @@ impl Problem {
             return failed();
         };
         let run = goal_deck(&deck, &self.goals);
-        let Ok(mut out) = engine.run(&run, cancel) else {
+        let Ok(mut out) = runner.solve(&run, cancel).await else {
             return failed();
         };
         if let Some(why) = self.limits.broken(&self.deck, &deck, &out.segments) {
@@ -725,7 +736,9 @@ impl Problem {
                 .iter()
                 .flat_map(Goal::check_frequencies)
                 .collect();
-            let Ok(estimate) = buried::estimate_at(engine, &deck, &setup, &mhz, 3, cancel) else {
+            let Ok(estimate) =
+                buried::estimate_at_with(runner, &deck, &setup, &mhz, 3, cancel).await
+            else {
                 return failed();
             };
             for (r, f) in out.frequencies.iter_mut().zip(&mhz) {
@@ -822,9 +835,9 @@ impl Options {
 
 /// The shared state of a run: best design, counts and the memory of
 /// designs already tried.
-struct Search<'a, P: FnMut(Progress<'_>) + Send> {
+struct Search<'a, R, P: FnMut(Progress<'_>) + Send> {
     problem: &'a Problem,
-    engine: &'a Engine,
+    runner: &'a R,
     cancel: &'a CancelToken,
     options: Options,
     state: Mutex<State>,
@@ -840,7 +853,7 @@ struct State {
     stage: &'static str,
 }
 
-impl<P: FnMut(Progress<'_>) + Send> Search<'_, P> {
+impl<R: Runner + Sync, P: FnMut(Progress<'_>) + Send> Search<'_, R, P> {
     fn finished(&self) -> bool {
         if self.cancel.is_cancelled() {
             return true;
@@ -855,59 +868,52 @@ impl<P: FnMut(Progress<'_>) + Send> Search<'_, P> {
     }
 
     /// Scores designs (unit coordinates), several at once.
-    fn score(&self, batch: &[Vec<f64>]) -> Vec<f64> {
-        let costs = Mutex::new(vec![FAILED; batch.len()]);
-        let next = Mutex::new(0usize);
-        let threads = self.options.threads.max(1).min(batch.len());
-        std::thread::scope(|s| {
-            for _ in 0..threads {
-                s.spawn(|| {
-                    loop {
-                        let k = {
-                            let mut n = next.lock().unwrap();
-                            let k = *n;
-                            *n += 1;
-                            k
-                        };
-                        if k >= batch.len() || self.finished() {
-                            break;
-                        }
-                        let values = self.problem.values_at(&batch[k]);
-                        // Designs already tried aren't run again.
-                        let key: Vec<u64> = values.iter().map(|v| v.to_bits()).collect();
-                        if let Some(c) = self.state.lock().unwrap().seen.get(&key) {
-                            costs.lock().unwrap()[k] = *c;
-                            continue;
-                        }
-                        let trial = self.problem.evaluate(self.engine, &values, self.cancel);
-                        if self.cancel.is_cancelled() {
-                            break;
-                        }
-                        costs.lock().unwrap()[k] = trial.cost;
-                        let mut st = self.state.lock().unwrap();
-                        st.seen.insert(key, trial.cost);
-                        st.evaluations += 1;
-                        if let Some(why) = &trial.rejected {
-                            st.rejected += 1;
-                            st.last_rejection = Some(why.clone());
-                        }
-                        let improved = trial.cost < st.best.cost;
-                        if improved {
-                            st.best = trial;
-                        }
-                        (self.progress.lock().unwrap())(Progress {
-                            evaluations: st.evaluations,
-                            rejected: st.rejected,
-                            last_rejection: st.last_rejection.as_deref(),
-                            best: &st.best,
-                            improved,
-                            stage: st.stage,
-                        });
-                    }
+    async fn score(&self, batch: &[Vec<f64>]) -> Vec<f64> {
+        par_map(
+            (0..batch.len()).collect(),
+            self.options.threads.max(1),
+            |k: usize| async move {
+                if self.finished() {
+                    return FAILED;
+                }
+                let values = self.problem.values_at(&batch[k]);
+                // Designs already tried aren't run again.
+                let key: Vec<u64> = values.iter().map(|v| v.to_bits()).collect();
+                let seen = self.state.lock().unwrap().seen.get(&key).copied();
+                if let Some(c) = seen {
+                    return c;
+                }
+                let trial = self
+                    .problem
+                    .evaluate_with(self.runner, &values, self.cancel)
+                    .await;
+                if self.cancel.is_cancelled() {
+                    return FAILED;
+                }
+                let cost = trial.cost;
+                let mut st = self.state.lock().unwrap();
+                st.seen.insert(key, trial.cost);
+                st.evaluations += 1;
+                if let Some(why) = &trial.rejected {
+                    st.rejected += 1;
+                    st.last_rejection = Some(why.clone());
+                }
+                let improved = trial.cost < st.best.cost;
+                if improved {
+                    st.best = trial;
+                }
+                (self.progress.lock().unwrap())(Progress {
+                    evaluations: st.evaluations,
+                    rejected: st.rejected,
+                    last_rejection: st.last_rejection.as_deref(),
+                    best: &st.best,
+                    improved,
+                    stage: st.stage,
                 });
-            }
-        });
-        costs.into_inner().unwrap()
+                cost
+            },
+        )
+        .await
     }
 }
 
@@ -920,6 +926,17 @@ pub fn optimise(
     cancel: &CancelToken,
     progress: impl FnMut(Progress<'_>) + Send,
 ) -> Trial {
+    block_on(optimise_with(problem, engine, options, cancel, progress))
+}
+
+/// [`optimise`] on any [`Runner`].
+pub async fn optimise_with<R: Runner + Sync>(
+    problem: &Problem,
+    runner: &R,
+    options: Options,
+    cancel: &CancelToken,
+    progress: impl FnMut(Progress<'_>) + Send,
+) -> Trial {
     let start: Vec<f64> = problem
         .params
         .iter()
@@ -927,7 +944,7 @@ pub fn optimise(
         .collect();
     let search = Search {
         problem,
-        engine,
+        runner,
         cancel,
         options,
         state: Mutex::new(State {
@@ -946,19 +963,19 @@ pub fn optimise(
         progress: Mutex::new(progress),
     };
     let x0 = problem.unit_of(&start);
-    search.score(std::slice::from_ref(&x0));
+    search.score(std::slice::from_ref(&x0)).await;
     match options.method {
         Method::NelderMead => {
             search.set_stage("Fine-tuning (Nelder-Mead)");
-            nelder_mead(&search, &x0, 0.1);
+            nelder_mead(&search, &x0, 0.1).await;
         }
         Method::DifferentialEvolution => {
             search.set_stage("Searching the whole range (differential evolution)");
             let polish_budget = options.max_evaluations / 5;
-            differential_evolution(&search, &x0, options.max_evaluations - polish_budget);
+            differential_evolution(&search, &x0, options.max_evaluations - polish_budget).await;
             let best = search.state.lock().unwrap().best.values.clone();
             search.set_stage("Polishing the best design (Nelder-Mead)");
-            nelder_mead(&search, &problem.unit_of(&best), 0.03);
+            nelder_mead(&search, &problem.unit_of(&best), 0.03).await;
         }
     }
     search.state.into_inner().unwrap().best
@@ -969,7 +986,11 @@ pub fn optimise(
 /// contractions at once, so a step takes one batch of parallel runs. When
 /// the simplex shrinks to nothing it restarts around the best design, up to
 /// three times, as long as restarts keep finding something better.
-fn nelder_mead<P: FnMut(Progress<'_>) + Send>(search: &Search<'_, P>, x0: &[f64], size: f64) {
+async fn nelder_mead<R: Runner + Sync, P: FnMut(Progress<'_>) + Send>(
+    search: &Search<'_, R, P>,
+    x0: &[f64],
+    size: f64,
+) {
     let n = x0.len();
     if n == 0 {
         return;
@@ -988,7 +1009,7 @@ fn nelder_mead<P: FnMut(Progress<'_>) + Send>(search: &Search<'_, P>, x0: &[f64]
             };
             simplex.push(v);
         }
-        let mut costs = search.score(&simplex);
+        let mut costs = search.score(&simplex).await;
         while !search.finished() {
             let mut order: Vec<usize> = (0..=n).collect();
             order.sort_by(|&a, &b| costs[a].total_cmp(&costs[b]));
@@ -1016,7 +1037,7 @@ fn nelder_mead<P: FnMut(Progress<'_>) + Send>(search: &Search<'_, P>, x0: &[f64]
             };
             // Reflection, expansion, outside and inside contraction.
             let tries = [towards(-1.0), towards(-2.0), towards(-0.5), towards(0.5)];
-            let c = search.score(&tries);
+            let c = search.score(&tries).await;
             let (fr, fe, fo, fi) = (c[0], c[1], c[2], c[3]);
             let replace = if fr < costs[0] {
                 Some(if fe < fr { (1, fe) } else { (0, fr) })
@@ -1046,7 +1067,7 @@ fn nelder_mead<P: FnMut(Progress<'_>) + Send>(search: &Search<'_, P>, x0: &[f64]
                                 .collect()
                         })
                         .collect();
-                    let c = search.score(&shrunk);
+                    let c = search.score(&shrunk).await;
                     for (k, (v, f)) in shrunk.into_iter().zip(c).enumerate() {
                         simplex[k + 1] = v;
                         costs[k + 1] = f;
@@ -1067,8 +1088,8 @@ fn nelder_mead<P: FnMut(Progress<'_>) + Send>(search: &Search<'_, P>, x0: &[f64]
 /// with bounce-back limits), using at most `budget` designs. The start
 /// design is in the first population; the rest are spread evenly over the
 /// limits (Latin hypercube). Each generation is scored at once.
-fn differential_evolution<P: FnMut(Progress<'_>) + Send>(
-    search: &Search<'_, P>,
+async fn differential_evolution<R: Runner + Sync, P: FnMut(Progress<'_>) + Send>(
+    search: &Search<'_, R, P>,
     x0: &[f64],
     budget: usize,
 ) {
@@ -1098,7 +1119,7 @@ fn differential_evolution<P: FnMut(Progress<'_>) + Send>(
             .collect();
         pop.push(design);
     }
-    let mut costs = search.score(&pop);
+    let mut costs = search.score(&pop).await;
     let (mut mu_f, mut mu_cr) = (0.5, 0.5);
     let start = search.state.lock().unwrap().evaluations;
     while !search.finished() && search.state.lock().unwrap().evaluations - start < budget {
@@ -1150,7 +1171,7 @@ fn differential_evolution<P: FnMut(Progress<'_>) + Send>(
                     .collect()
             })
             .collect();
-        let c = search.score(&trials);
+        let c = search.score(&trials).await;
         let (mut good_f, mut good_cr) = (Vec::new(), Vec::new());
         for (i, (t, ct)) in trials.into_iter().zip(c).enumerate() {
             if ct <= costs[i] {

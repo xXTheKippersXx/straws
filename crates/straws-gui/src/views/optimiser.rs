@@ -7,9 +7,9 @@ use web_time::Instant;
 
 use eframe::egui::{self, RichText};
 use egui_plot::{Line, Plot, PlotPoints};
-use straws_core::engine::{CancelToken, Engine};
+use straws_core::engine::CancelToken;
 use straws_core::optimise::{
-    FAILED, Goal, Limits, Method, Options, Param, Problem, Trial, optimise,
+    FAILED, Goal, Limits, Method, Options, Param, Problem, Trial, optimise_with,
 };
 
 use crate::app::{Data, Level, Settings};
@@ -189,13 +189,6 @@ impl OptimiserView {
         let Some(model) = &data.model else {
             return empty_note(ui, "Open a model to optimise it.");
         };
-        if crate::files::WEB {
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                "The optimiser needs the desktop app: you can set it up here and save it in a                  project, but not run it in the browser.",
-            )
-            .on_hover_text(crate::compute::DESKTOP_ONLY);
-        }
         // Keep the variable list in step with the deck.
         // Variables marked "fixed" in the Variables view are left alone.
         let values: Vec<(String, f64, Option<Range>)> = model
@@ -669,8 +662,6 @@ impl OptimiserView {
                     {
                         r.cancel.cancel();
                     }
-                } else if crate::files::WEB {
-                    crate::views::desktop_only(ui);
                 } else {
                     start = ui
                         .add_enabled(can_start, egui::Button::new("Start"))
@@ -797,10 +788,11 @@ impl OptimiserView {
 
     fn start(&mut self, data: &mut Data, ctx: egui::Context) {
         let Some(model) = &data.model else { return };
-        let engine = match Engine::self_hosted() {
-            Ok(e) => e.with_solver_threads(1),
+        // Designs run several at once: one solver thread each.
+        let runner = match crate::compute::analysis_runner(&ctx, Some(1)) {
+            Ok(r) => r,
             Err(e) => {
-                data.message(Level::Error, format!("Can't start the NEC engine: {e}"));
+                data.message(Level::Error, e);
                 return;
             }
         };
@@ -852,14 +844,14 @@ impl OptimiserView {
         let mut options = Options::new(self.method, self.max_evaluations);
         options.stop_when_met = self.stop_when_met;
         let c = cancel.clone();
-        std::thread::spawn(move || {
-            let mut last = Instant::now() - Duration::from_secs(1);
+        crate::compute::spawn_work(move || async move {
+            let mut last: Option<Instant> = None;
             let tx2 = tx.clone();
             let ctx2 = ctx.clone();
-            let best = optimise(&problem, &engine, options, &c, move |p| {
+            let best = optimise_with(&problem, &runner, options, &c, move |p| {
                 // Report improvements, and the count now and then.
-                if p.improved || last.elapsed() > Duration::from_millis(200) {
-                    last = Instant::now();
+                if p.improved || last.is_none_or(|t| t.elapsed() > Duration::from_millis(200)) {
+                    last = Some(Instant::now());
                     let _ = tx2.send(Msg::Progress {
                         evaluations: p.evaluations,
                         best: p.best.clone(),
@@ -869,7 +861,8 @@ impl OptimiserView {
                     });
                     ctx2.request_repaint();
                 }
-            });
+            })
+            .await;
             let _ = tx.send(Msg::Done(best));
             ctx.request_repaint();
         });
@@ -887,7 +880,9 @@ impl OptimiserView {
             started: Instant::now(),
             names,
             deck_text: model.deck.to_text(),
-            last_shown: Instant::now() - Duration::from_secs(1),
+            last_shown: Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(Instant::now),
         });
     }
 

@@ -38,9 +38,8 @@ with a paid certificate; the code is all here to read and build yourself.
 
 **No install?** [Open STRAWS in your browser](https://xxthekippersxx.github.io/straws/)
 (any recent Chrome, Edge, Firefox or Safari). It's the same app with the same
-engine; your files stay on your computer. The optimiser and the convergence,
-tolerance and sensitivity checks need the desktop app, which is also several
-times faster. See [web/README.md](web/README.md).
+engine, optimiser and checks; your files stay on your computer. The desktop
+app is several times faster. See [web/README.md](web/README.md).
 
 ## What it does
 

@@ -15,10 +15,6 @@ use straws_core::output::{Patch, Segment};
 #[cfg(target_arch = "wasm32")]
 pub use crate::compute_web::Compute;
 
-/// What the browser version can't do yet.
-pub const DESKTOP_ONLY: &str = "The browser version runs the engine for sweeps, the frequency \
-     slider, near fields and snapshots. This needs the desktop app (free, from the Releases \
-     page on GitHub), which also runs several times faster.";
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::Compute;
 
@@ -88,6 +84,59 @@ pub fn explain(e: &EngineError) -> String {
         Some((_, hint)) => format!("{hint}\n\n{text}"),
         None => text,
     }
+}
+
+/// The engine for the analyses that run many decks (the optimiser, the
+/// checks): worker processes on the desktop, the page's engine Web Workers
+/// in a browser.
+#[cfg(not(target_arch = "wasm32"))]
+pub type AnalysisRunner = straws_core::engine::Engine;
+#[cfg(target_arch = "wasm32")]
+pub type AnalysisRunner = crate::web::PoolRunner;
+
+/// The engine for analyses. `solver_threads`: threads each run's solver may
+/// use (desktop only; 1 when the analysis runs several at once).
+pub fn analysis_runner(
+    ctx: &eframe::egui::Context,
+    solver_threads: Option<usize>,
+) -> Result<AnalysisRunner, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = ctx;
+        straws_core::engine::Engine::self_hosted()
+            .map(|e| match solver_threads {
+                Some(n) => e.with_solver_threads(n),
+                None => e,
+            })
+            .map_err(|e| format!("can't start the NEC engine: {e}"))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = solver_threads;
+        Ok(crate::web::PoolRunner(crate::web::pool(ctx)))
+    }
+}
+
+/// Runs an analysis in the background: `make` builds its future, which runs
+/// on a thread of its own on the desktop, or on the page's event loop in a
+/// browser (its engine runs going to the Web Workers).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_work<F, Fut>(make: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    std::thread::spawn(move || straws_core::runner::block_on(make()));
+}
+
+/// In a browser (one thread, so nothing needs to be `Send`).
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_work<F, Fut>(make: F)
+where
+    F: FnOnce() -> Fut + 'static,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    wasm_bindgen_futures::spawn_local(make());
 }
 
 /// Runs one deck in the background (a thread and a worker process on the

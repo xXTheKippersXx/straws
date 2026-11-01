@@ -6,11 +6,11 @@ use std::sync::mpsc::{Receiver, channel};
 
 use eframe::egui::{self, RichText};
 use straws_core::analysis::checks::{Severity, average_gain};
-use straws_core::analysis::convergence::{Comparison, Figures, Verdict, compare};
+use straws_core::analysis::convergence::{Comparison, Figures, Verdict, compare_with};
 use straws_core::analysis::plan::FrequencyPlan;
-use straws_core::analysis::sensitivity::{Trims, trims};
-use straws_core::analysis::tolerance::{Spread, percentiles, spread};
-use straws_core::engine::{CancelToken, Engine};
+use straws_core::analysis::sensitivity::{Trims, trims_with};
+use straws_core::analysis::tolerance::{Spread, percentiles, spread_with};
+use straws_core::engine::CancelToken;
 
 use crate::app::{Data, Settings};
 
@@ -136,8 +136,6 @@ impl ChecksView {
                     self.job = None;
                     self.result = None;
                 }
-            } else if crate::files::WEB {
-                crate::views::desktop_only(ui);
             } else if ui
                 .button("Run the check")
                 .on_hover_text(format!(
@@ -162,10 +160,12 @@ impl ChecksView {
                 let c = cancel.clone();
                 let (tx, rx) = channel();
                 let ctx = ui.ctx().clone();
-                std::thread::spawn(move || {
-                    let r = Engine::self_hosted()
-                        .map_err(|e| e.to_string())
-                        .and_then(|e| compare(&e, &deck, &plan, mhz, estimate.as_ref(), &c));
+                let runner = crate::compute::analysis_runner(&ctx, None);
+                crate::compute::spawn_work(move || async move {
+                    let r = match runner {
+                        Ok(e) => compare_with(&e, &deck, &plan, mhz, estimate.as_ref(), &c).await,
+                        Err(e) => Err(e),
+                    };
                     let _ = tx.send(r);
                     ctx.request_repaint();
                 });
@@ -321,8 +321,6 @@ impl ChecksView {
                     self.tolerance_job = None;
                     self.tolerance = None;
                 }
-            } else if crate::files::WEB {
-                crate::views::desktop_only(ui);
             } else if ui
                 .button("Run")
                 .on_hover_text(format!(
@@ -351,13 +349,17 @@ impl ChecksView {
                 let (tx, rx) = channel();
                 let ctx = ui.ctx().clone();
                 let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-                std::thread::spawn(move || {
+                // The builds run several at once: one solver thread each.
+                let runners = crate::compute::analysis_runner(&ctx, None)
+                    .and_then(|a| Ok((a, crate::compute::analysis_runner(&ctx, Some(1))?)));
+                crate::compute::spawn_work(move || async move {
                     let ctx2 = ctx.clone();
-                    let r = Engine::self_hosted()
-                        .map_err(|e| e.to_string())
-                        .and_then(|e| {
-                            spread(
+                    let r = match runners {
+                        Err(e) => Err(e),
+                        Ok((e, single)) => {
+                            spread_with(
                                 &e,
+                                &single,
                                 &deck,
                                 &plan,
                                 mhz,
@@ -372,7 +374,9 @@ impl ChecksView {
                                     ctx2.request_repaint();
                                 },
                             )
-                        });
+                            .await
+                        }
+                    };
                     let _ = tx.send(r);
                     ctx.request_repaint();
                 });
@@ -544,8 +548,6 @@ impl ChecksView {
                     self.trim_job = None;
                     self.trims = None;
                 }
-            } else if crate::files::WEB {
-                crate::views::desktop_only(ui);
             } else if ui
                 .button("Run")
                 .on_hover_text(format!("At {:.4} MHz, one run per wire", data.mhz))
@@ -592,13 +594,17 @@ impl ChecksView {
                 let ctx = ui.ctx().clone();
                 let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
                 let total = tags.len();
-                std::thread::spawn(move || {
+                // The wires run several at once: one solver thread each.
+                let runners = crate::compute::analysis_runner(&ctx, None)
+                    .and_then(|a| Ok((a, crate::compute::analysis_runner(&ctx, Some(1))?)));
+                crate::compute::spawn_work(move || async move {
                     let ctx2 = ctx.clone();
-                    let r = Engine::self_hosted()
-                        .map_err(|e| e.to_string())
-                        .and_then(|e| {
-                            trims(
+                    let r = match runners {
+                        Err(e) => Err(e),
+                        Ok((e, single)) => {
+                            trims_with(
                                 &e,
+                                &single,
                                 &deck,
                                 &tags,
                                 &plan,
@@ -613,7 +619,9 @@ impl ChecksView {
                                     ctx2.request_repaint();
                                 },
                             )
-                        });
+                            .await
+                        }
+                    };
                     let _ = tx.send(r);
                     ctx.request_repaint();
                 });

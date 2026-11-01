@@ -3,19 +3,29 @@
 //! ([`EnginePool`]) and gathered each frame by [`Compute::poll`], since a
 //! browser page has no threads of its own to wait on.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Duration;
 
 use eframe::egui;
-use straws_core::analysis::buried::Setup;
+use straws_core::analysis::buried::{self, Estimate, Point, Setup};
 use straws_core::analysis::plan::{FrequencyPlan, PatternRequest, geometry_deck, run_deck};
 use straws_core::analysis::sweep::{FreqPoint, SweepResults};
 use straws_core::deck::NumericDeck;
-use straws_core::engine::{EngineError, RawRun, split_sweep};
+use straws_core::engine::{CancelToken, EngineError, RawRun, split_sweep};
 use straws_core::output::NecOutput;
 use web_time::Instant;
 
 use crate::compute::{Update, explain};
-use crate::web::EnginePool;
+use crate::web::{EnginePool, PoolRunner};
+
+/// Frequencies across a sweep where buried radials' share is worked out
+/// (as on the desktop).
+const ESTIMATE_SAMPLES: usize = 5;
+
+/// A result some background work fills in when it's done.
+type Slot<T> = Rc<RefCell<Option<T>>>;
 
 pub struct Compute {
     pool: EnginePool,
@@ -38,6 +48,13 @@ struct SweepRun {
     helpers: NumericDeck,
     started: Instant,
     messages: Vec<String>,
+    /// Radials on or under the ground: their estimate, worked out
+    /// alongside. Points wait for it (as on the desktop).
+    estimate: Option<Slot<Result<Estimate, String>>>,
+    token: CancelToken,
+    held: Vec<(usize, FreqPoint)>,
+    /// Every job is in; the sweep ends once the estimate is too.
+    done: Option<(Duration, Vec<String>)>,
 }
 
 struct RefineRun {
@@ -46,6 +63,10 @@ struct RefineRun {
     mhz: f64,
     step: f64,
     helpers: NumericDeck,
+    estimate: Option<Slot<Result<Point, String>>>,
+    token: CancelToken,
+    /// The run's point, waiting for the estimate.
+    held: Option<FreqPoint>,
 }
 
 /// A sweep for something else (a snapshot), filling its own results.
@@ -99,6 +120,7 @@ impl Compute {
         for (id, result) in self.pool.take() {
             self.finished(id, result);
         }
+        self.release();
         std::mem::take(&mut self.updates)
     }
 
@@ -108,12 +130,96 @@ impl Compute {
     }
 
     pub fn cancel_all(&mut self) {
+        self.cancel_sweep();
+        self.cancel_refine();
+    }
+
+    fn cancel_sweep(&mut self) {
         if let Some(s) = self.sweep.take() {
+            s.token.cancel();
             for (id, _) in s.jobs {
                 self.pool.cancel(id);
             }
         }
-        self.cancel_refine();
+    }
+
+    /// Starts `work` on the page's event loop; its result lands in the slot.
+    fn background<T: 'static>(
+        &self,
+        work: impl std::future::Future<Output = T> + 'static,
+    ) -> Slot<T> {
+        let slot: Slot<T> = Rc::new(RefCell::new(None));
+        let (out, ctx) = (slot.clone(), self.ctx.clone());
+        wasm_bindgen_futures::spawn_local(async move {
+            let r = work.await;
+            *out.borrow_mut() = Some(r);
+            ctx.request_repaint();
+        });
+        slot
+    }
+
+    /// Hands on points that were waiting for a buried-radial estimate.
+    fn release(&mut self) {
+        if let Some(s) = &mut self.sweep {
+            let ready = match &s.estimate {
+                None => Some(None),
+                Some(slot) => match &*slot.borrow() {
+                    None => None,
+                    Some(Ok(e)) => Some(Some(e.clone())),
+                    Some(Err(m)) => {
+                        self.updates.push(Update::Note {
+                            generation: s.generation,
+                            message: format!(
+                                "The radials on or under the ground couldn't be estimated: {m}."
+                            ),
+                        });
+                        Some(None)
+                    }
+                },
+            };
+            if let Some(estimate) = ready {
+                // Said once: from now on the points go straight through.
+                s.estimate = None;
+                for (index, mut point) in s.held.drain(..) {
+                    if let Some(z) = estimate.as_ref().and_then(|e| e.z(point.mhz)) {
+                        point = point.with_estimate(z);
+                    }
+                    self.updates.push(Update::SweepPoint {
+                        generation: s.generation,
+                        index,
+                        point,
+                    });
+                }
+                if let Some((elapsed, messages)) = s.done.take() {
+                    let generation = s.generation;
+                    self.sweep = None;
+                    self.updates.push(Update::SweepDone {
+                        generation,
+                        elapsed,
+                        messages,
+                    });
+                }
+            }
+        }
+        if let Some(r) = &mut self.refine
+            && r.held.is_some()
+        {
+            let ready = match &r.estimate {
+                None => Some(None),
+                Some(slot) => slot.borrow().as_ref().map(|p| p.as_ref().ok().cloned()),
+            };
+            if let Some(estimate) = ready
+                && let Some(mut point) = r.held.take()
+            {
+                if let Some(p) = estimate {
+                    point = point.with_estimate(p.z_perfect + p.dz);
+                }
+                point.mhz = r.mhz;
+                let generation = r.generation;
+                self.refine = None;
+                self.updates.push(Update::Refined { generation, point });
+            }
+        }
     }
 
     pub fn sweep(
@@ -124,20 +230,16 @@ impl Compute {
         step: f64,
         buried: Option<Setup>,
     ) {
-        if let Some(s) = self.sweep.take() {
-            for (id, _) in s.jobs {
-                self.pool.cancel(id);
-            }
-        }
-        if buried.is_some() {
-            self.updates.push(Update::Note {
-                generation,
-                message: "Radials on or under the ground are left out in the browser version \
-                          (their estimate needs the desktop app), so the results are as if \
-                          they weren't there."
-                    .into(),
-            });
-        }
+        self.cancel_sweep();
+        let token = CancelToken::new();
+        // Radials on or under the ground: their estimate runs alongside.
+        let estimate = buried.map(|setup| {
+            let (runner, deck, token) =
+                (PoolRunner(self.pool.clone()), deck.clone(), token.clone());
+            self.background(async move {
+                buried::estimate_with(&runner, &deck, &setup, &plan, ESTIMATE_SAMPLES, &token).await
+            })
+        });
         let run = run_deck(deck, &plan, Some(PatternRequest::new(step)));
         let jobs = submit_split(&self.pool, &run);
         self.sweep = Some(SweepRun {
@@ -148,6 +250,10 @@ impl Compute {
             helpers: deck.clone(),
             started: Instant::now(),
             messages: Vec::new(),
+            estimate,
+            token,
+            held: Vec::new(),
+            done: None,
         });
     }
 
@@ -157,9 +263,17 @@ impl Compute {
         deck: &NumericDeck,
         mhz: f64,
         step: f64,
-        _buried: Option<Setup>,
+        buried: Option<Setup>,
     ) {
         self.cancel_refine();
+        let token = CancelToken::new();
+        let estimate = buried.map(|setup| {
+            let (runner, deck, token) =
+                (PoolRunner(self.pool.clone()), deck.clone(), token.clone());
+            self.background(
+                async move { buried::point_with(&runner, &deck, &setup, mhz, &token).await },
+            )
+        });
         let run = run_deck(
             deck,
             &FrequencyPlan::single(mhz),
@@ -172,11 +286,15 @@ impl Compute {
             mhz,
             step,
             helpers: deck.clone(),
+            estimate,
+            token,
+            held: None,
         });
     }
 
     pub fn cancel_refine(&mut self) {
         if let Some(r) = self.refine.take() {
+            r.token.cancel();
             self.pool.cancel(r.job);
         }
     }
@@ -215,24 +333,27 @@ impl Compute {
             self.updates.push(Update::Geometry { generation, result });
             return;
         }
-        if self.refine.as_ref().is_some_and(|r| r.job == id) {
-            let Some(r) = self.refine.take() else { return };
+        if let Some(r) = &mut self.refine
+            && r.job == id
+        {
             match result {
-                Ok(raw) => {
-                    if let Some(f) = parse(&raw).frequencies.first() {
-                        let mut point =
-                            FreqPoint::from_result(f, Some(r.step)).without_helpers(&r.helpers);
-                        point.mhz = r.mhz;
-                        self.updates.push(Update::Refined {
-                            generation: r.generation,
-                            point,
-                        });
+                // Handed on by `release`, with the estimate if there is one.
+                Ok(raw) => match parse(&raw).frequencies.first() {
+                    Some(f) => {
+                        r.held = Some(
+                            FreqPoint::from_result(f, Some(r.step)).without_helpers(&r.helpers),
+                        );
                     }
+                    None => self.refine = None,
+                },
+                Err(e) => {
+                    let generation = r.generation;
+                    self.cancel_refine();
+                    self.updates.push(Update::RefineFailed {
+                        generation,
+                        message: explain(&e),
+                    });
                 }
-                Err(e) => self.updates.push(Update::RefineFailed {
-                    generation: r.generation,
-                    message: explain(&e),
-                }),
             }
             return;
         }
@@ -251,13 +372,10 @@ impl Compute {
                             },
                             None => j,
                         };
+                        // Handed on by `release`, with the estimate if any.
                         let point =
                             FreqPoint::from_result(f, Some(s.step)).without_helpers(&s.helpers);
-                        self.updates.push(Update::SweepPoint {
-                            generation,
-                            index,
-                            point,
-                        });
+                        s.held.push((index, point));
                     }
                     for m in out.messages {
                         if !s.messages.contains(&m) {
@@ -266,22 +384,11 @@ impl Compute {
                     }
                     s.remaining -= 1;
                     if s.remaining == 0 {
-                        let elapsed = s.started.elapsed();
-                        let messages = std::mem::take(&mut s.messages);
-                        self.sweep = None;
-                        self.updates.push(Update::SweepDone {
-                            generation,
-                            elapsed,
-                            messages,
-                        });
+                        s.done = Some((s.started.elapsed(), std::mem::take(&mut s.messages)));
                     }
                 }
                 Err(e) => {
-                    if let Some(s) = self.sweep.take() {
-                        for (j, _) in s.jobs {
-                            self.pool.cancel(j);
-                        }
-                    }
+                    self.cancel_sweep();
                     self.updates.push(Update::SweepFailed {
                         generation,
                         message: explain(&e),

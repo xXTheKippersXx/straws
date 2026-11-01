@@ -14,6 +14,7 @@ pub mod output;
 pub mod pdf;
 pub mod reference;
 pub mod report;
+pub mod runner;
 pub mod sheetfit;
 pub mod solver;
 pub mod step;

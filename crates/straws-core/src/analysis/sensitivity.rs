@@ -7,10 +7,13 @@
 //! joined at both ends) can't be trimmed alone and is left out.
 
 use super::buried::Setup;
-use super::convergence::{Figures, figures};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use super::convergence::{Figures, figures_with};
 use super::plan::FrequencyPlan;
 use crate::deck::NumericDeck;
 use crate::engine::{CancelToken, Engine};
+use crate::runner::{Runner, block_on, par_map};
 
 /// Ends of the GW cards (card index, end 0/1) that meet no other end and
 /// don't stand on the ground.
@@ -105,7 +108,42 @@ pub fn trims(
     cancel: &CancelToken,
     progress: &(dyn Fn(usize, usize) + Sync),
 ) -> Result<Trims, String> {
-    let design = figures(engine, deck, plan, mhz, estimate, cancel)?;
+    // Several wires run at once: one solver thread each.
+    let single = engine.clone().with_solver_threads(1);
+    block_on(trims_with(
+        engine,
+        &single,
+        deck,
+        tags,
+        plan,
+        mhz,
+        delta,
+        threads,
+        over_ground,
+        estimate,
+        cancel,
+        progress,
+    ))
+}
+
+/// [`trims`] on any [`Runner`]: `runner` runs the design, `wires_runner`
+/// the trimmed wires.
+#[allow(clippy::too_many_arguments)]
+pub async fn trims_with<R: Runner + Sync>(
+    runner: &R,
+    wires_runner: &R,
+    deck: &NumericDeck,
+    tags: &[i64],
+    plan: &FrequencyPlan,
+    mhz: f64,
+    delta: f64,
+    threads: usize,
+    over_ground: bool,
+    estimate: Option<&Setup>,
+    cancel: &CancelToken,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Result<Trims, String> {
+    let design = figures_with(runner, deck, plan, mhz, estimate, cancel).await?;
     let jobs: Vec<(i64, NumericDeck)> = tags
         .iter()
         .filter_map(|&t| Some((t, lengthened(deck, t, delta, over_ground)?)))
@@ -113,36 +151,30 @@ pub fn trims(
     if jobs.is_empty() {
         return Err("none of the wires has a free tip to trim".into());
     }
-    let engine = engine.clone().with_solver_threads(1);
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(Vec::new());
-    std::thread::scope(|s| {
-        for _ in 0..threads.clamp(1, jobs.len()) {
-            s.spawn(|| {
-                loop {
-                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if k >= jobs.len() || cancel.is_cancelled() {
-                        break;
-                    }
-                    let r = figures(&engine, &jobs[k].1, plan, mhz, estimate, cancel);
-                    if let Ok(mut all) = results.lock() {
-                        all.push((k, r));
-                        progress(all.len(), jobs.len());
-                    }
+    let total = jobs.len();
+    let done = AtomicUsize::new(0);
+    let all = par_map(
+        jobs,
+        threads.clamp(1, total),
+        |(tag, trimmed): (i64, NumericDeck)| {
+            let done = &done;
+            async move {
+                if cancel.is_cancelled() {
+                    return (tag, Err("stopped".to_string()));
                 }
-            });
-        }
-    });
+                let r = figures_with(wires_runner, &trimmed, plan, mhz, estimate, cancel).await;
+                progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+                (tag, r)
+            }
+        },
+    )
+    .await;
     if cancel.is_cancelled() {
         return Err("stopped".into());
     }
-    let mut all = results
-        .into_inner()
-        .map_err(|_| "a worker failed".to_string())?;
-    all.sort_by_key(|(k, _)| *k);
     let wires = all
         .into_iter()
-        .filter_map(|(k, r)| Some((jobs[k].0, r.ok()?)))
+        .filter_map(|(tag, r)| Some((tag, r.ok()?)))
         .collect();
     Ok(Trims {
         mhz,

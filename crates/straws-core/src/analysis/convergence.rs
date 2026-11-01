@@ -14,6 +14,7 @@ use super::pattern::{Component, PatternGrid};
 use super::plan::{FrequencyPlan, PatternRequest, run_deck};
 use crate::deck::NumericDeck;
 use crate::engine::{CancelToken, Engine};
+use crate::runner::{Runner, block_on, join_all};
 
 /// The most segments the finer model may have.
 pub const MAX_SEGMENTS: i64 = 20_000;
@@ -266,10 +267,33 @@ pub fn compare(
     estimate: Option<&Setup>,
     cancel: &CancelToken,
 ) -> Result<Comparison, String> {
+    block_on(compare_with(engine, deck, plan, mhz, estimate, cancel))
+}
+
+/// [`compare`] on any [`Runner`] (the two models run at once).
+pub async fn compare_with<R: Runner>(
+    runner: &R,
+    deck: &NumericDeck,
+    plan: &FrequencyPlan,
+    mhz: f64,
+    estimate: Option<&Setup>,
+    cancel: &CancelToken,
+) -> Result<Comparison, String> {
     let finer = refined(deck)?;
-    let before = figures(engine, deck, plan, mhz, estimate, cancel)?;
-    let after = figures(engine, &finer, plan, mhz, estimate, cancel)?;
-    Ok(Comparison { mhz, before, after })
+    let mut both = join_all(vec![
+        figures_with(runner, deck, plan, mhz, estimate, cancel),
+        figures_with(runner, &finer, plan, mhz, estimate, cancel),
+    ])
+    .await
+    .into_iter();
+    let (Some(before), Some(after)) = (both.next(), both.next()) else {
+        return Err("the engine gave no results".into());
+    };
+    Ok(Comparison {
+        mhz,
+        before: before?,
+        after: after?,
+    })
 }
 
 /// The model's figures at `mhz`: feed impedance, the nearest resonance (in
@@ -283,19 +307,35 @@ pub fn figures(
     estimate: Option<&Setup>,
     cancel: &CancelToken,
 ) -> Result<Figures, String> {
-    let sweep = engine
-        .run(&run_deck(deck, plan, None), cancel)
-        .map_err(|e| e.to_string())?;
-    let one = engine
-        .run(
-            &run_deck(
-                deck,
-                &FrequencyPlan::single(mhz),
-                Some(PatternRequest::new(5.0)),
-            ),
-            cancel,
-        )
-        .map_err(|e| e.to_string())?;
+    block_on(figures_with(engine, deck, plan, mhz, estimate, cancel))
+}
+
+/// [`figures`] on any [`Runner`] (the sweep and the pattern run at once).
+pub async fn figures_with<R: Runner>(
+    runner: &R,
+    deck: &NumericDeck,
+    plan: &FrequencyPlan,
+    mhz: f64,
+    estimate: Option<&Setup>,
+    cancel: &CancelToken,
+) -> Result<Figures, String> {
+    let sweep_deck = run_deck(deck, plan, None);
+    let one_deck = run_deck(
+        deck,
+        &FrequencyPlan::single(mhz),
+        Some(PatternRequest::new(5.0)),
+    );
+    let mut runs = join_all(vec![
+        runner.solve(&sweep_deck, cancel),
+        runner.solve(&one_deck, cancel),
+    ])
+    .await
+    .into_iter();
+    let (Some(sweep), Some(one)) = (runs.next(), runs.next()) else {
+        return Err("the engine gave no results".into());
+    };
+    let sweep = sweep.map_err(|e| e.to_string())?;
+    let one = one.map_err(|e| e.to_string())?;
     let f = one
         .frequencies
         .first()
@@ -312,8 +352,8 @@ pub fn figures(
     let estimated = match estimate {
         Some(setup) => {
             let freqs: Vec<f64> = sweep.frequencies.iter().map(|f| f.mhz).collect();
-            let e = buried::estimate(engine, deck, setup, plan, 5, cancel)?;
-            let p = buried::point(engine, deck, setup, mhz, cancel)?;
+            let e = buried::estimate_with(runner, deck, setup, plan, 5, cancel).await?;
+            let p = buried::point_with(runner, deck, setup, mhz, cancel).await?;
             let est = p.z_perfect + p.dz;
             if est.re > 0.0 && z.re > 0.0 {
                 peak_dbi += 10.0 * (z.re / est.re).log10();

@@ -8,7 +8,10 @@ use std::rc::{Rc, Weak};
 use std::time::Duration;
 
 use eframe::egui;
-use straws_core::engine::{EngineError, RawRun, finish_run};
+use straws_core::deck::NumericDeck;
+use straws_core::engine::{CancelToken, EngineError, RawRun, finish_run};
+use straws_core::output::NecOutput;
+use straws_core::runner::Runner;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
@@ -391,4 +394,61 @@ fn receive(pool: &Rc<RefCell<Inner>>, slot: usize, data: &JsValue) {
     }
     inner.done.push((id, result));
     inner.ctx.request_repaint();
+}
+
+/// The engine Web Workers as a [`Runner`], for the analyses that run many
+/// decks (the optimiser, the checks, the buried-radial estimate): each run
+/// is a job for the pool, and its future finishes when the answer arrives,
+/// so a batch of them runs on every worker at once.
+#[derive(Clone)]
+pub struct PoolRunner(pub EnginePool);
+
+// SAFETY: the browser app is built without threads (wasm32 with no atomics),
+// so nothing is ever shared between threads; the analyses only ask for Sync
+// because on the desktop they spread work over threads.
+unsafe impl Sync for PoolRunner {}
+
+/// A job's answer, and who to wake when it comes.
+type Answer = Rc<
+    RefCell<(
+        Option<Result<RawRun, EngineError>>,
+        Option<std::task::Waker>,
+    )>,
+>;
+
+impl Runner for PoolRunner {
+    fn solve(
+        &self,
+        deck: &NumericDeck,
+        cancel: &CancelToken,
+    ) -> impl std::future::Future<Output = Result<NecOutput, EngineError>> {
+        let answer: Answer = Rc::new(RefCell::new((None, None)));
+        if !cancel.is_cancelled() {
+            let slot = answer.clone();
+            self.0.submit_with(deck.to_nec_text(), true, move |r| {
+                let mut s = slot.borrow_mut();
+                s.0 = Some(r);
+                if let Some(w) = s.1.take() {
+                    w.wake();
+                }
+            });
+        }
+        let cancel = cancel.clone();
+        std::future::poll_fn(move |cx| {
+            if cancel.is_cancelled() {
+                return std::task::Poll::Ready(Err(EngineError::Cancelled));
+            }
+            let mut s = answer.borrow_mut();
+            match s.0.take() {
+                Some(r) => std::task::Poll::Ready(r.map(|raw| {
+                    NecOutput::parse_with_binary(&raw.text, &raw.binary)
+                        .unwrap_or_else(|| NecOutput::parse(&raw.text))
+                })),
+                None => {
+                    s.1 = Some(cx.waker().clone());
+                    std::task::Poll::Pending
+                }
+            }
+        })
+    }
 }
