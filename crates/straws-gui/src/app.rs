@@ -592,6 +592,11 @@ impl App {
             dock.remove_tab(at);
         }
         cc.egui_ctx.set_visuals(visuals(settings.dark));
+        // Pressing anywhere else (even to start a drag in the 3D view)
+        // finishes typing in a box and applies it, as Enter does.
+        cc.egui_ctx.options_mut(|o| {
+            o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Presses;
+        });
         let mut app = App {
             plan_edit: FrequencyPlan::around(14.2),
             checks_unit: straws_core::units::Length::default(),

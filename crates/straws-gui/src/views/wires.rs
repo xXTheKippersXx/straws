@@ -301,11 +301,22 @@ impl WiresView {
                                 });
                             }
                             if r.gained_focus() {
+                                // Clicked here straight from another cell: that
+                                // cell's typing counts (it may be drawn after
+                                // this one, and would find its edit gone).
+                                if let Some((l, f, t)) = self.editing.take()
+                                    && !escape
+                                    && let Some(w) = wires.iter().find(|w| w.line == l)
+                                    && t.trim() != Self::display(w, f, settings, mhz)
+                                    && !t.trim().is_empty()
+                                {
+                                    commit = Some((l, f, Self::to_field(w, f, &t, settings, mhz)));
+                                }
                                 self.editing = Some((wire.line, field, shown.clone()));
                             } else if r.has_focus() {
                                 self.editing = Some((wire.line, field, text.clone()));
                             }
-                            if r.lost_focus() {
+                            if r.lost_focus() && mine {
                                 if !escape && text.trim() != shown && !text.trim().is_empty() {
                                     let value = Self::to_field(wire, field, &text, settings, mhz);
                                     commit = Some((wire.line, field, value));

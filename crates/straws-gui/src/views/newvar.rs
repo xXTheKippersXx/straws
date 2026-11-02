@@ -67,21 +67,27 @@ impl Request {
     }
 }
 
-/// A short name for a wire, from its comment if it has one ("reflector").
+/// A short name for a wire, from the first two words of its comment if it
+/// has one ("reflector", "left_upper": one word alone would give wires
+/// called "left upper" and "left lower" the same name).
 pub fn wire_name(deck: &Deck, wire: &Wire) -> String {
     let comment = deck
         .lines
         .get(wire.line)
         .and_then(|l| l.comment.as_deref())
         .unwrap_or("");
-    let word: String = comment
+    let words: Vec<String> = comment
         .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_lowercase();
+        .take(2)
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect::<String>()
+                .to_ascii_lowercase()
+        })
+        .take_while(|w| w.starts_with(|c: char| c.is_ascii_alphabetic()))
+        .collect();
+    let word = words.join("_");
     if word.len() >= 3 && word.starts_with(|c: char| c.is_ascii_alphabetic()) {
         word
     } else {

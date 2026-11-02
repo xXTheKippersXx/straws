@@ -159,11 +159,14 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
                 var_changes.push((name.clone(), s));
                 s = conductivity;
             }
-            chosen = Ground::Real {
-                method: m,
-                permittivity: e,
-                conductivity: s,
-            };
+            // Unless a ground button above was clicked this frame.
+            if chosen == current {
+                chosen = Ground::Real {
+                    method: m,
+                    permittivity: e,
+                    conductivity: s,
+                };
+            }
         }
 
         if let Ground::Real { method, .. } = current {
@@ -326,11 +329,38 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
         data.overrides.push((name, value));
         data.edit_event = Some(data.edit_event.unwrap_or(false) || !dragging);
     }
+    // Wires lying on or under the ground plane: NEC refuses them over a
+    // ground (wires drawn in 3D start on z = 0).
+    let lying = lying_on_ground(data);
+    let mut raised = None;
     if chosen != current
         && let Some(m) = &mut data.model
     {
         let before = m.deck.clone();
         m.deck.set_ground(chosen);
+        let height_set_by_formula = m
+            .deck
+            .height_line()
+            .is_some_and(|l| !matches!(link(&m.deck, l, 7), Link::Number));
+        if current == Ground::FreeSpace
+            && let Some(low) = lying
+        {
+            raised = Some(if height_set_by_formula {
+                "Some wires lie on or under the ground, which NEC can't work out: raise the \
+                 antenna with its height variable."
+                    .to_string()
+            } else {
+                // Half a wavelength up: a usual starting height.
+                let shift = m.deck.height_shift() + wavelength(mhz) / 2.0 - low;
+                m.deck.set_height_shift(shift);
+                format!(
+                    "Some wires lay on the ground, which NEC can't work out, so the antenna \
+                     was raised to {} {} (half a wavelength) above it. Change that under Height.",
+                    show_length(wavelength(mhz) / 2.0, unit, mhz),
+                    unit.symbol()
+                )
+            });
+        }
         // Keep the variables that set the ground's values.
         if matches!(chosen, Ground::Real { .. })
             && let Some(line) = m.deck.lines.iter().rposition(
@@ -355,7 +385,12 @@ pub fn ui(ui: &mut egui::Ui, data: &mut Data, settings: &Settings) {
             m.deck.set_radial_screen(Some(s));
         }
         match m.keep_if_valid(before, &data.overrides) {
-            Ok(()) => data.edit_event = Some(data.edit_event.unwrap_or(false) || !dragging),
+            Ok(()) => {
+                data.edit_event = Some(data.edit_event.unwrap_or(false) || !dragging);
+                if let Some(note) = raised {
+                    data.message(Level::Info, note);
+                }
+            }
             Err(why) => data.message(Level::Warning, format!("Ground not changed: {why}.")),
         }
     }
@@ -392,6 +427,35 @@ fn lowest_point(data: &Data) -> Option<(f64, Option<f64>)> {
         }
     }
     (low < f64::MAX).then_some((low, feed))
+}
+
+/// The lowest point (metres) when some wire lies flat on the ground plane
+/// or dips under it, which NEC refuses over a ground. A wire just touching
+/// it at one end (a vertical's base) is fine.
+fn lying_on_ground(data: &Data) -> Option<f64> {
+    let m = data.model.as_ref()?;
+    let tiny = 1e-6;
+    let mut low = f64::MAX;
+    let mut lying = false;
+    let mut look = |a: [f64; 3], b: [f64; 3]| {
+        low = low.min(a[2]).min(b[2]);
+        lying |= (a[2] < tiny && b[2] < tiny) || a[2] < -tiny || b[2] < -tiny;
+    };
+    let segments: Vec<_> = m.visible_segments().collect();
+    if segments.is_empty() {
+        for w in &m.wires {
+            look(w.a, w.b);
+        }
+    } else {
+        for s in segments {
+            let (a, b) = s.ends();
+            look(a, b);
+        }
+    }
+    // The deck's own numbers where it has them (the engine prints five
+    // figures, so a curve's segments can dip a hair below).
+    let low = lowest_point(data).map_or(low, |(l, _)| l);
+    lying.then_some(low)
 }
 
 /// How a ground value is set in the deck.

@@ -121,9 +121,11 @@ pub fn messages(ui: &mut egui::Ui, data: &Data) {
                     Level::Warning => ("⚠", ui.visuals().warn_fg_color),
                     Level::Error => ("✖", ui.visuals().error_fg_color),
                 };
-                ui.horizontal_wrapped(|ui| {
+                // The text wraps under itself, beside the mark (a wrapped
+                // row lost its first letters off the left edge).
+                ui.horizontal_top(|ui| {
                     ui.colored_label(colour, mark);
-                    ui.label(&m.text);
+                    ui.add(egui::Label::new(&m.text).wrap());
                 });
             }
         });

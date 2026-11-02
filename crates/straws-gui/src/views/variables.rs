@@ -43,6 +43,9 @@ struct Editing {
     own_step: bool,
     /// Asked to confirm a delete that writes the value back in.
     confirm_delete: bool,
+    /// Other wires' ends joined to the ends it moves (following, not
+    /// following, can't), worked out for this many edits.
+    joined: Option<(u64, (usize, usize, usize))>,
 }
 
 #[derive(Default)]
@@ -343,7 +346,13 @@ impl VariablesView {
                 let speed = notes
                     .step
                     .filter(|s| *s > 0.0)
-                    .unwrap_or((base.abs() * 0.001).max(1e-6))
+                    // A zero (slider -1 to 1) steps in thousandths, not
+                    // millionths ("0.000000 m").
+                    .unwrap_or(if base == 0.0 {
+                        0.001
+                    } else {
+                        (base.abs() * 0.001).max(1e-6)
+                    })
                     * per;
                 let exact = ui.add(
                     crate::views::num(&mut value)
@@ -405,6 +414,7 @@ impl VariablesView {
             own_step: notes.step.is_some(),
             notes,
             confirm_delete: false,
+            joined: None,
         });
     }
 
@@ -425,6 +435,7 @@ impl VariablesView {
         let mut close = false;
         let mut apply = false;
         let mut delete = false;
+        let mut follow = false;
         let base_value = value_of(worked, &e.original).unwrap_or(0.0);
         ui.label(RichText::new(format!("Editing {}", e.original)).strong());
         egui::Grid::new("variable editor")
@@ -555,6 +566,56 @@ impl VariablesView {
                 e.notes.fixed = !vary;
                 ui.end_row();
 
+                // Wire ends it moves that other wires are joined to.
+                let edits = data.edits;
+                let (following, loose, stuck) = match e.joined {
+                    Some((at, j)) if at == edits => j,
+                    _ => {
+                        let j = deck.joined_ends(&e.original);
+                        e.joined = Some((edits, j));
+                        j
+                    }
+                };
+                if following + loose + stuck > 0 {
+                    ui.label("Joined wires");
+                    ui.horizontal_wrapped(|ui| {
+                        let mut on = loose == 0;
+                        let r = ui.add_enabled(
+                            loose > 0,
+                            egui::Checkbox::new(&mut on, "move joined ends too"),
+                        );
+                        if loose > 0 {
+                            r.on_hover_text(format!(
+                                "{loose} end{} of other wires {} joined where this variable \
+                                 moves a wire end, but {} stay put. Tick to make {} follow it \
+                                 from now on.",
+                                plural(loose),
+                                if loose == 1 { "is" } else { "are" },
+                                if loose == 1 { "it would" } else { "they would" },
+                                if loose == 1 { "it" } else { "them" },
+                            ));
+                        } else {
+                            r.on_disabled_hover_text(
+                                "Every wire end joined to the ends it moves follows it. To set \
+                                 one free again, type a number into its cell in the Wires view.",
+                            );
+                        }
+                        if on && loose > 0 {
+                            follow = true;
+                        }
+                        if stuck > 0 {
+                            ui.label(
+                                RichText::new(format!(
+                                    "({stuck} joined end{} set by other formulas can't follow)",
+                                    plural(stuck)
+                                ))
+                                .weak(),
+                            );
+                        }
+                    });
+                    ui.end_row();
+                }
+
                 ui.label("Used by");
                 ui.horizontal_wrapped(|ui| {
                     ui.label(uses_text(deck, &e.original, data));
@@ -611,6 +672,26 @@ impl VariablesView {
             }
         });
 
+        if follow {
+            let name = self.editing.as_ref().expect("editing").original.clone();
+            let mut moved = 0;
+            match change(data, |d| {
+                moved = d.follow_joined_ends(&name);
+                Ok(())
+            }) {
+                Ok(()) => data.message(
+                    Level::Info,
+                    format!(
+                        "{moved} joined wire end{} now follow{} {name}.",
+                        plural(moved),
+                        if moved == 1 { "s" } else { "" }
+                    ),
+                ),
+                Err(why) => {
+                    data.message(Level::Warning, format!("Joined ends not changed: {why}."))
+                }
+            }
+        }
         if apply || delete {
             let e = self.editing.as_ref().expect("editing");
             let result = if delete {
@@ -678,6 +759,11 @@ impl VariablesView {
             self.editing = None;
         }
     }
+}
+
+/// "s" for more than one.
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
 }
 
 /// Changes the deck with `edit`, keeping the change only if the deck still

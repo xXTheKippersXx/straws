@@ -808,11 +808,97 @@ impl Deck {
             self.set_field(line, field, &text);
         }
         self.add_variable(name, &format_real(value), notes)?;
-        // Curves on the ends that moved follow them too.
-        if !joined.is_empty() {
-            self.link_curves();
-        }
+        // Curves on the ends that moved follow them too (a curve is part
+        // of the wire it closes, whether or not joined wires follow).
+        self.link_curves();
         Ok(())
+    }
+
+    /// Other wires' ends joined to wire ends that variable `name` moves:
+    /// (how many follow it already, the changes that would make the rest
+    /// follow, how many can't because they're other formulas). Each change
+    /// is (line, field, text).
+    fn joined_to(&self, name: &str) -> (usize, Vec<(usize, usize, String)>, usize) {
+        let Ok(numeric) = self.expand() else {
+            return (0, Vec::new(), 0);
+        };
+        let lower = name.to_ascii_lowercase();
+        let ws: Vec<Wire> = super::edit::wires(self, &numeric)
+            .into_iter()
+            .filter(|w| !w.moved)
+            .collect();
+        let uses = |w: &Wire, field: usize| expr::names_in(&w.fields[field]).contains(&lower);
+        let (mut following, mut changes, mut stuck) = (0, Vec::new(), 0);
+        let mut seen: Vec<(usize, usize)> = Vec::new();
+        for w in &ws {
+            for end in 0..2 {
+                for k in 0..3 {
+                    let field = 2 + end * 3 + k;
+                    if !uses(w, field) {
+                        continue;
+                    }
+                    // Counted once, whichever of a joined pair comes first.
+                    if !seen.contains(&(w.line, field)) {
+                        seen.push((w.line, field));
+                    }
+                    let p = w.end(end);
+                    let near = 1e-6 * p.iter().fold(1.0_f64, |a, x| a.max(x.abs()));
+                    for o in &ws {
+                        for oe in 0..2 {
+                            let q = o.end(oe);
+                            let of = 2 + oe * 3 + k;
+                            if (o.line == w.line && oe == end)
+                                || (0..3).any(|i| (p[i] - q[i]).abs() > near)
+                                || seen.contains(&(o.line, of))
+                            {
+                                continue;
+                            }
+                            seen.push((o.line, of));
+                            if uses(o, of) {
+                                following += 1;
+                            } else if o.is_number(of) {
+                                // The same position in metres: (text × scale
+                                // + offset - its offset) / its scale.
+                                let t = &w.fields[field];
+                                let text = if o.scale == w.scale
+                                    && (o.offset[k] - w.offset[k]).abs() < 1e-12
+                                {
+                                    t.clone()
+                                } else {
+                                    let s = w.scale / o.scale;
+                                    let c = (w.offset[k] - o.offset[k]) / o.scale;
+                                    format!("({t})*{}+({})", format_real(s), format_real(c))
+                                };
+                                changes.push((o.line, of, text));
+                            } else {
+                                stuck += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (following, changes, stuck)
+    }
+
+    /// How other wires' ends joined to ends that `name` moves stand:
+    /// (following it, not following but could, can't: other formulas).
+    pub fn joined_ends(&self, name: &str) -> (usize, usize, usize) {
+        let (following, changes, stuck) = self.joined_to(name);
+        (following, changes.len(), stuck)
+    }
+
+    /// Makes other wires' ends joined to ends that variable `name` moves
+    /// follow it from now on (as "move joined ends too" does when a
+    /// variable is made), and curves on them too. Returns how many ends
+    /// changed.
+    pub fn follow_joined_ends(&mut self, name: &str) -> usize {
+        let (_, changes, _) = self.joined_to(name);
+        for (line, field, text) in &changes {
+            self.set_field(*line, *field, text);
+        }
+        self.link_curves();
+        changes.len()
     }
 
     /// A new variable (metres) for the length of `wires[0]`, driving the
@@ -1277,6 +1363,20 @@ mod tests {
         deck.make_coord_variable(&w[0], 7, &[], "top", &VarNotes::default())
             .unwrap();
         assert_eq!(ws(&deck)[1].fields[4], "5");
+        // ... until it's asked to, later.
+        assert_eq!(deck.joined_ends("top"), (0, 1, 0));
+        assert_eq!(deck.follow_joined_ends("top"), 1);
+        assert_eq!(ws(&deck)[1].fields[4], "top");
+        assert_eq!(deck.joined_ends("top"), (1, 0, 0));
+        // A length made without them, joined up afterwards.
+        let mut deck = Deck::parse(text);
+        let w = ws(&deck);
+        deck.drive_length(&w[..1], &[], Anchor::Start, "len", &VarNotes::default())
+            .unwrap();
+        assert_eq!(deck.follow_joined_ends("len"), 1);
+        let n = deck.expand_with(&[("len".into(), 7.0)]).unwrap();
+        let w2 = wires(&deck, &n);
+        assert_eq!((w2[0].b[2], w2[1].a[2], w2[1].b[2]), (7.0, 7.0, 5.0));
     }
 
     #[test]

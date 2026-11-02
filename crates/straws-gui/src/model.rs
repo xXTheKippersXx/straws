@@ -50,6 +50,18 @@ pub fn validate(deck: &Deck, overrides: &[(String, f64)]) -> Result<(), String> 
     let n = deck.expand_with(overrides).map_err(|e| e.to_string())?;
     let geometry = &n.cards[..n.control_start()];
     for (k, c) in geometry.iter().enumerate() {
+        // Arcs, helices and moves too: a formula that can't be worked out
+        // (the square root of a negative number) would lose the wire.
+        if ["GA", "GH", "GM", "GR", "GX", "GS"].iter().any(|m| c.is(m))
+            && c.floats.iter().any(|v| !v.is_finite() || v.abs() > 1e7)
+        {
+            return Err(format!(
+                "the {} card on line {} would have a number that can't be worked out \
+                 (check the formulas it uses)",
+                c.mnemonic,
+                c.line.map_or(0, |l| l + 1)
+            ));
+        }
         if !c.is("GW") {
             continue;
         }

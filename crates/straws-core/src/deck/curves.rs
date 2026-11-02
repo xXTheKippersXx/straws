@@ -366,9 +366,10 @@ fn facing_of(tilt: f64, azimuth: f64) -> Option<usize> {
     })
 }
 
-/// `(text)`, unless it's a plain number or a name.
+/// `(text)`, unless it's a plain number or a name. Negative numbers are
+/// bracketed too: `-0.05^2` is -(0.05²).
 fn paren(text: &str) -> String {
-    if text.chars().skip(1).any(|c| "+-*/\\^<>= ".contains(c)) {
+    if text.starts_with('-') || text.chars().skip(1).any(|c| "+-*/\\^<>= ".contains(c)) {
         format!("({text})")
     } else {
         text.to_string()
@@ -521,6 +522,30 @@ impl Deck {
                         None => format!("{}*{length}", format_real(c2)),
                     };
                     set.push((v("r"), radius));
+                    // When the chord turns (the ends move differently), the
+                    // arc turns with it: by atn(cross/dot) against the chord
+                    // now (4nec2 has no two-argument arctangent; fine for
+                    // turns under 90 degrees).
+                    if num(&di_t).is_none() || num(&dj_t).is_none() {
+                        let c = |x: f64| paren(&format_real(x));
+                        let cross =
+                            format!("{}*{}-{}*{}", c(di), paren(&dj_t), c(dj), paren(&di_t));
+                        let dot = format!("{}*{}+{}*{}", c(di), paren(&di_t), c(dj), paren(&dj_t));
+                        let turn = format!("atn(({cross})/({dot}))");
+                        // Which way the arc's own angles run in this plane.
+                        let p = ends[0];
+                        let (vi, vj) = (p[i] - spec.centre[i], p[j] - spec.centre[j]);
+                        let e = 1e-3_f64;
+                        let mut q2 = p;
+                        q2[i] = spec.centre[i] + vi * e.cos() - vj * e.sin();
+                        q2[j] = spec.centre[j] + vi * e.sin() + vj * e.cos();
+                        let step = (spec.angle_of(q2) - spec.angle_of(p) + 540.0).rem_euclid(360.0)
+                            - 180.0;
+                        let sign = if step >= 0.0 { "+" } else { "-" };
+                        for (name, angle) in [("from", spec.from), ("to", spec.to)] {
+                            set.push((v(name), format!("{}{sign}{turn}", format_real(angle))));
+                        }
+                    }
                 }
                 _ => {
                     // Move with the first end that's on a wire.
@@ -859,6 +884,88 @@ mod tests {
                     assert!(on_a_rod, "{} at {len}: {p:?}", c.name);
                 }
                 assert!((spec.radius - 0.025).abs() < 1e-9);
+            }
+        }
+    }
+
+    #[test]
+    fn arcs_follow_one_side_of_a_folded_dipole() {
+        use crate::deck::vars::Anchor;
+        // Four wires out from the middle, the left side longer, closed by
+        // a semicircle at each end; the left side's length a variable.
+        let text = "CE\nGW 1 7 0.3 0 0 0.3 0.35 0 .005\nGW 2 7 0.3 0 0.05 0.3 0.35 0.05 .005\n\
+                    GW 3 7 0.3 0 0 0.3 -0.4 0 .005\nGW 4 7 0.3 0 0.05 0.3 -0.4 0.05 .005\n\
+                    GE 0\nEX 0 1 1 0 1\nFR 0 1 0 0 200\nEN\n";
+        for anchor in [Anchor::Start, Anchor::Centre, Anchor::End] {
+            for follow in [true, false] {
+                let mut deck = Deck::parse(text);
+                for (tag, y, out) in [(5, 0.35, 0.4), (6, -0.4, -0.45)] {
+                    let mut spec =
+                        arc_between([0.3, y, 0.0], [0.3, y, 0.05], [0.3, out, 0.025], 0, 180.0)
+                            .unwrap();
+                    spec.name = format!("end{tag}");
+                    spec.segments = 3;
+                    spec.wire_radius = 0.005;
+                    deck.add_curve(&spec, tag).unwrap();
+                }
+                let n = deck.expand().unwrap();
+                let ws = wires(&deck, &n);
+                let joined = if follow { ws.clone() } else { Vec::new() };
+                // One variable for both, then one for each.
+                let together = anchor != Anchor::End;
+                if together {
+                    deck.drive_length(&ws[2..4], &joined, anchor, "left_len", &VarNotes::default())
+                        .unwrap();
+                } else {
+                    for (k, name) in [(2, "left_len"), (3, "left2_len")] {
+                        let n = deck.expand().unwrap();
+                        let ws = wires(&deck, &n);
+                        let joined = if follow { ws.clone() } else { Vec::new() };
+                        deck.drive_length(
+                            &ws[k..=k],
+                            &joined,
+                            Anchor::Start,
+                            name,
+                            &VarNotes::default(),
+                        )
+                        .unwrap();
+                    }
+                }
+                // Separate lengths can differ: the semicircle then tilts.
+                for (len, len2) in [(0.4, 0.4), (0.5, 0.5), (0.3, 0.3), (0.5, 0.45), (0.4, 0.43)] {
+                    if together && len != len2 {
+                        continue;
+                    }
+                    let mut set = vec![("left_len".to_string(), len)];
+                    if !together {
+                        set.push(("left2_len".into(), len2));
+                    }
+                    let n = deck.expand_with(&set).unwrap();
+                    let ws = wires(&deck, &n);
+                    for c in curves(&deck) {
+                        let spec = deck.curve_spec(&c, &n.symbols).unwrap();
+                        let chord = if c.name == "end6" {
+                            (0.05f64).hypot(len - len2)
+                        } else {
+                            0.05
+                        };
+                        assert!(
+                            (spec.radius - chord / 2.0).abs() < 1e-9,
+                            "{anchor:?} {follow} {} at {len}: r {}\n{}",
+                            c.name,
+                            spec.radius,
+                            deck.to_text()
+                        );
+                        for deg in [spec.from, spec.to] {
+                            let a: f64 = deg.to_radians();
+                            let p = spec.place([spec.radius * a.cos(), spec.radius * a.sin(), 0.0]);
+                            let on_a_rod = ws.iter().any(|w| {
+                                (0..2).any(|e| (0..3).all(|k| (w.end(e)[k] - p[k]).abs() < 1e-9))
+                            });
+                            assert!(on_a_rod, "{anchor:?} {follow} {} at {len}: {p:?}", c.name);
+                        }
+                    }
+                }
             }
         }
     }
